@@ -34,3 +34,10 @@ Avoid reimplementing business logic that belongs in `kub-dataset`, `kub-simulate
 - include tests for behavior changes
 - update README when user-facing behavior changes
 - keep dependencies minimal
+
+## Releases
+
+- Use SemVer (`MAJOR.MINOR.PATCH`) for `project.version`.
+- Use matching Git tag format `vMAJOR.MINOR.PATCH`.
+- PyPI publishing is handled by `.github/workflows/publish-pypi.yml` using GitHub environment `pypi`.
+- Official publish source is `feelpp/kub-cli` and target PyPI org is `feelpp`.

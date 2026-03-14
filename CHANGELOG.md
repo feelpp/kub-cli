@@ -7,6 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+- Added `kub-cli bump` command for SemVer version updates in `pyproject.toml` and fallback package version
+- Added GitHub Actions workflow for PyPI publishing via GitHub environment `pypi`
+- Added release validation script enforcing `vMAJOR.MINOR.PATCH` tags and tag/version matching
+- Restricted publish workflow to official `feelpp/kub-cli` repository and documented PyPI organization target `feelpp`
+
 ## 0.1.0 - 2026-03-14
 
 - Initial production-ready release
