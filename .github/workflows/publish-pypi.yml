@@ -1,0 +1,102 @@
+# SPDX-FileCopyrightText: 2026 University of Strasbourg
+# SPDX-FileContributor: Christophe Prud'homme
+# SPDX-FileContributor: Cemosis
+# SPDX-License-Identifier: Apache-2.0
+
+name: Publish PyPI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "SemVer tag to publish (vMAJOR.MINOR.PATCH)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Enforce official Feel++ repository
+        run: |
+          if [ "${GITHUB_REPOSITORY}" != "feelpp/kub-cli" ]; then
+            echo "Publishing is only allowed from feelpp/kub-cli."
+            exit 2
+          fi
+
+      - name: Validate SemVer and pyproject version
+        run: |
+          TAG_VALUE="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          python scripts/validate_release_tag.py --tag "${TAG_VALUE}"
+
+  build-distributions:
+    name: Build sdist and wheel
+    needs: validate-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Validate distributions
+        run: twine check dist/*
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build-distributions
+    if: github.repository == 'feelpp/kub-cli'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: pypi
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

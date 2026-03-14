@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Sequence
 
 import typer
@@ -14,6 +15,7 @@ import typer
 from . import __version__
 from .commands import WrapperOptions, runWrapperCommand
 from .errors import KubCliError
+from .versioning import bumpProjectVersion
 
 
 CONTEXT_SETTINGS = {
@@ -185,6 +187,7 @@ def createMetaApp() -> typer.Typer:
 
     @app.callback(invoke_without_command=True)
     def meta(
+        ctx: typer.Context,
         version: bool = typer.Option(
             False,
             "--version",
@@ -196,9 +199,55 @@ def createMetaApp() -> typer.Typer:
             typer.echo(f"kub-cli {__version__}")
             raise typer.Exit(code=0)
 
-        typer.echo(
-            "kub-cli thin wrapper. Use: kub-dataset, kub-simulate, kub-dashboard, kub-img."
-        )
+        if ctx.invoked_subcommand is None:
+            typer.echo(
+                "kub-cli thin wrapper. Use: kub-dataset, kub-simulate, kub-dashboard, kub-img."
+            )
+
+    @app.command("bump")
+    def bumpCommand(
+        part: str = typer.Argument(
+            "patch",
+            metavar="PART",
+            help="Semantic version part to bump: major, minor, patch.",
+        ),
+        toVersion: str | None = typer.Option(
+            None,
+            "--to",
+            metavar="VERSION",
+            help="Set an explicit semantic version (MAJOR.MINOR.PATCH).",
+        ),
+        projectRoot: Path = typer.Option(
+            Path("."),
+            "--project-root",
+            metavar="PATH",
+            help="Project root containing pyproject.toml.",
+        ),
+        dryRun: bool = typer.Option(
+            False,
+            "--dry-run",
+            help="Print planned version changes without writing files.",
+        ),
+    ) -> None:
+        try:
+            result = bumpProjectVersion(
+                projectRoot=projectRoot.resolve(),
+                part=part,
+                toVersion=toVersion,
+                dryRun=dryRun,
+            )
+        except KubCliError as error:
+            typer.secho(str(error), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=error.exit_code) from error
+
+        if result.changed:
+            action = "Planned" if dryRun else "Updated"
+            typer.echo(f"{action} version: {result.oldVersion} -> {result.newVersion}")
+        else:
+            typer.echo(f"Version unchanged: {result.newVersion}")
+
+        typer.echo(f"pyproject: {result.pyprojectPath}")
+        typer.echo(f"fallback: {result.initPath}")
 
     return app
 

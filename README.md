@@ -133,6 +133,7 @@ Derived Apptainer remote source:
 
 ```text
 oras://ghcr.io/feelpp/ktirio-urban-building:master-sif
+```
 
 Default image references used when no explicit image is configured:
 
@@ -143,7 +144,6 @@ Other tags are supported (for example `pr-<nnn>`), e.g.:
 
 - Docker: `ghcr.io/feelpp/ktirio-urban-building:pr-456`
 - Apptainer source: `oras://ghcr.io/feelpp/ktirio-urban-building:pr-456-sif`
-```
 
 Important:
 
@@ -250,6 +250,59 @@ uv venv .venv
 uv pip install -e '.[dev]'
 pytest
 ```
+
+Version bumping for maintainers:
+
+```bash
+# bump patch/minor/major from pyproject version
+kub-cli bump patch
+kub-cli bump minor
+kub-cli bump major
+
+# explicit target version
+kub-cli bump patch --to 0.2.0
+
+# preview only
+kub-cli bump patch --dry-run
+```
+
+Release versioning policy:
+
+- `kub-cli` uses SemVer (`MAJOR.MINOR.PATCH`).
+- Release tags must be `vMAJOR.MINOR.PATCH`.
+- The tag version must match `project.version` in `pyproject.toml`.
+
+PyPI publishing via GitHub environment:
+
+- Workflow: `.github/workflows/publish-pypi.yml`
+- Trigger: push a SemVer tag (for example `v0.2.0`) or run `workflow_dispatch`.
+- Publish job uses GitHub `environment: pypi` and OpenID Connect trusted publishing (no PyPI API token needed in GitHub secrets).
+- Publishing is restricted to the official repository `feelpp/kub-cli`.
+
+One-time setup:
+
+1. In GitHub repository settings, create environment `pypi`.
+2. In PyPI Organizations, ensure project `kub-cli` belongs to organization `feelpp`.
+3. In the `kub-cli` PyPI project settings (under organization `feelpp`), add a trusted publisher bound to:
+   - owner/repository: `feelpp/kub-cli`
+   - workflow: `publish-pypi.yml`
+   - environment: `pypi`
+4. Ensure the first trusted release tag already exists in the repository.
+
+Release steps:
+
+```bash
+# 1) bump version in source tree
+kub-cli bump patch
+
+# 2) commit + tag matching SemVer version
+git add pyproject.toml src/kub_cli/__init__.py
+git commit -m "Release 0.1.1"
+git tag v0.1.1
+git push origin main --tags
+```
+
+The workflow validates the tag format and checks that it matches `pyproject.toml` before building and publishing to PyPI.
 
 ## License
 
