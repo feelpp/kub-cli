@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 University of Strasbourg
+# SPDX-FileContributor: Christophe Prud'homme
+# SPDX-FileContributor: Cemosis
+# SPDX-License-Identifier: Apache-2.0
+
+name: REUSE Compliance Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+      - name: REUSE Compliance Check
+        run: ./scripts/reuse-lint.sh

@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 University of Strasbourg
+# SPDX-FileContributor: Christophe Prud'homme
+# SPDX-FileContributor: Cemosis
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kub-cli"
+version = "0.1.0"
+description = "Thin Python CLI wrappers for kub containerized apps (Apptainer + Docker)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "kub-cli contributors" }
+]
+keywords = ["apptainer", "docker", "hpc", "cli", "simulation", "wrapper"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+  "Environment :: Console",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Utilities"
+]
+dependencies = [
+  "typer>=0.12,<1.0",
+  "tomli>=2.0.1; python_version < '3.11'"
+]
+
+[project.urls]
+Homepage = "https://github.com/feelpp/kub-cli"
+Repository = "https://github.com/feelpp/kub-cli"
+Issues = "https://github.com/feelpp/kub-cli/issues"
+
+[project.scripts]
+kub-dataset = "kub_cli.cli:datasetMain"
+kub-simulate = "kub_cli.cli:simulateMain"
+kub-dashboard = "kub_cli.cli:dashboardMain"
+kub-cli = "kub_cli.cli:metaMain"
+kub-img = "kub_cli.img_cli:imgMain"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "coverage[toml]>=7.4",
+  "reuse>=5.1"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kub_cli"]
+
+[tool.pytest.ini_options]
+minversion = "7.4"
+testpaths = ["tests"]
+addopts = "-ra"

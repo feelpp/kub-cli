@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 University of Strasbourg
+# SPDX-FileContributor: Christophe Prud'homme
+# SPDX-FileContributor: Cemosis
+# SPDX-License-Identifier: Apache-2.0
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
