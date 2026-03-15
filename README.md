@@ -113,6 +113,8 @@ Available on all three wrapper commands:
 - `--show-config`
 - `--version`
 
+Wrapper options must be placed before the forwarded in-container command arguments.
+
 Use `--` to force all remaining arguments to be forwarded:
 
 ```bash
@@ -265,6 +267,8 @@ kub-cli bump patch --to 0.2.0
 # preview only
 kub-cli bump patch --dry-run
 ```
+
+`kub-cli bump` updates `pyproject.toml`, fallback `src/kub_cli/__init__.py`, and rotates `CHANGELOG.md` by converting `## Unreleased` into the new released section.
 
 Release versioning policy:
 
