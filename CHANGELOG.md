@@ -15,6 +15,7 @@ SPDX-License-Identifier: Apache-2.0
 - Restricted publish workflow to official `feelpp/kub-cli` repository and documented PyPI organization target `feelpp`
 - Fixed wrapper argument forwarding so app flags like `--version` after the first inner command token are passed to in-container apps
 - Updated `kub-cli bump` to automatically rotate `CHANGELOG.md` (`Unreleased` -> released section with date)
+- Added automatic `/cemdb` bind handling for wrapped apps: current directory is mounted by default and `--cemdb-root` is forwarded as `/cemdb`
 
 ## 0.1.0 - 2026-03-14
 

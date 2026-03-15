@@ -108,17 +108,21 @@ Available on all three wrapper commands:
 - `--apptainer-flag FLAG` (repeatable)
 - `--docker-flag FLAG` (repeatable)
 - `--env KEY=VALUE` (repeatable)
+- `--cemdb-root PATH` (host path mounted to `/cemdb`; default current directory)
 - `--dry-run`
 - `--verbose / --no-verbose`
 - `--show-config`
 - `--version`
 
 Wrapper options must be placed before the forwarded in-container command arguments.
+By default, `kub-cli` mounts the current working directory to `/cemdb` and forwards
+`--cemdb-root /cemdb` to wrapped apps.
 
 Use `--` to force all remaining arguments to be forwarded:
 
 ```bash
 kub-simulate --runtime docker -- --help
+kub-dataset --cemdb-root ./cemdb -- pull-simulator --version 0.2.0 --force
 ```
 
 ## Image model

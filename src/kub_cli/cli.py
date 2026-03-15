@@ -46,6 +46,7 @@ def executeWrapperCommand(
     apptainerFlags: Sequence[str],
     dockerFlags: Sequence[str],
     envVars: Sequence[str],
+    cemdbRoot: str | None,
     showConfig: bool,
 ) -> None:
     forwardedArgs = normalizeForwardedArgs(ctx.args)
@@ -60,6 +61,7 @@ def executeWrapperCommand(
         apptainerFlags=tuple(apptainerFlags),
         dockerFlags=tuple(dockerFlags),
         envVars=tuple(envVars),
+        cemdbRoot=cemdbRoot,
         showConfig=showConfig,
     )
 
@@ -144,6 +146,15 @@ def createWrapperApp(*, appName: str, helpText: str) -> typer.Typer:
             metavar="KEY=VALUE",
             help="Environment variable assignment for the process/container (repeatable).",
         ),
+        cemdbRoot: str | None = typer.Option(
+            None,
+            "--cemdb-root",
+            metavar="PATH",
+            help=(
+                "Host CEMDB root directory mounted as /cemdb inside container "
+                "(defaults to current directory)."
+            ),
+        ),
         showConfig: bool = typer.Option(
             False,
             "--show-config",
@@ -173,6 +184,7 @@ def createWrapperApp(*, appName: str, helpText: str) -> typer.Typer:
             apptainerFlags=apptainerFlags or [],
             dockerFlags=dockerFlags or [],
             envVars=envVars or [],
+            cemdbRoot=cemdbRoot,
             showConfig=showConfig,
         )
 

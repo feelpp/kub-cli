@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -21,6 +21,10 @@ from .img_integration import (
 )
 from .logging_utils import configureLogging
 from .runtime import KubAppRunner
+
+
+CEMDB_CONTAINER_ROOT = "/cemdb"
+CEMDB_OPTION = "--cemdb-root"
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,7 @@ class WrapperOptions:
     apptainerFlags: tuple[str, ...] = ()
     dockerFlags: tuple[str, ...] = ()
     envVars: tuple[str, ...] = ()
+    cemdbRoot: str | None = None
     showConfig: bool = False
 
 
@@ -51,8 +56,15 @@ def runWrapperCommand(
 ) -> int:
     """Resolve config and execute one wrapped in-container app."""
 
-    effectiveConfig = resolveEffectiveConfig(
+    hasUserForwardedArgs = bool(forwardedArgs)
+    preparedOptions, preparedForwardedArgs = prepareCemdbContext(
         options=options,
+        forwardedArgs=forwardedArgs,
+        cwd=cwd,
+    )
+
+    effectiveConfig = resolveEffectiveConfig(
+        options=preparedOptions,
         cwd=cwd,
         env=env,
         userConfigPath=userConfigPath,
@@ -62,11 +74,15 @@ def runWrapperCommand(
 
     if options.showConfig:
         print(json.dumps(effectiveConfig.toDict(), indent=2, sort_keys=True))
-        if not forwardedArgs and not options.dryRun:
+        if not hasUserForwardedArgs and not options.dryRun:
             return 0
 
     runner = KubAppRunner(config=effectiveConfig)
-    return runner.run(appName=appName, forwardedArgs=forwardedArgs, dryRun=options.dryRun)
+    return runner.run(
+        appName=appName,
+        forwardedArgs=preparedForwardedArgs,
+        dryRun=options.dryRun,
+    )
 
 
 def pullSelectedRuntimeImage(
@@ -162,3 +178,112 @@ def parseEnvAssignments(assignments: Sequence[str]) -> dict[str, str]:
         envMapping[normalizedKey] = value
 
     return envMapping
+
+
+def prepareCemdbContext(
+    *,
+    options: WrapperOptions,
+    forwardedArgs: Sequence[str],
+    cwd: Path | None,
+) -> tuple[WrapperOptions, list[str]]:
+    runtimeCwd = (cwd or Path.cwd()).resolve()
+    rewrittenArgs, forwardedCemdbRoot = rewriteForwardedCemdbArgs(forwardedArgs)
+
+    if options.cemdbRoot is not None:
+        selectedHostCemdb = options.cemdbRoot
+    elif forwardedCemdbRoot is not None:
+        selectedHostCemdb = forwardedCemdbRoot
+    else:
+        selectedHostCemdb = str(runtimeCwd)
+
+    hostCemdbRoot = resolveCemdbHostRoot(selectedHostCemdb, cwd=runtimeCwd)
+
+    if not forwardedHasCemdbRoot(rewrittenArgs):
+        rewrittenArgs = [CEMDB_OPTION, CEMDB_CONTAINER_ROOT, *rewrittenArgs]
+
+    updatedBinds = list(options.binds)
+    if not hasCemdbBind(updatedBinds):
+        updatedBinds.append(f"{hostCemdbRoot}:{CEMDB_CONTAINER_ROOT}")
+
+    return replace(options, binds=tuple(updatedBinds)), rewrittenArgs
+
+
+def rewriteForwardedCemdbArgs(forwardedArgs: Sequence[str]) -> tuple[list[str], str | None]:
+    rewritten: list[str] = []
+    hostCemdbRoot: str | None = None
+    rawArgs = list(forwardedArgs)
+    index = 0
+
+    while index < len(rawArgs):
+        token = rawArgs[index]
+
+        if token == CEMDB_OPTION:
+            if index + 1 >= len(rawArgs):
+                raise ConfigError(
+                    f"Missing value for forwarded {CEMDB_OPTION}. "
+                    "Provide a host directory path."
+                )
+
+            rawValue = rawArgs[index + 1]
+            if hostCemdbRoot is None:
+                hostCemdbRoot = rawValue
+
+            rewritten.extend([CEMDB_OPTION, CEMDB_CONTAINER_ROOT])
+            index += 2
+            continue
+
+        if token.startswith(f"{CEMDB_OPTION}="):
+            rawValue = token.split("=", maxsplit=1)[1]
+            if not rawValue.strip():
+                raise ConfigError(
+                    f"Empty value for forwarded {CEMDB_OPTION}=... option."
+                )
+
+            if hostCemdbRoot is None:
+                hostCemdbRoot = rawValue
+
+            rewritten.append(f"{CEMDB_OPTION}={CEMDB_CONTAINER_ROOT}")
+            index += 1
+            continue
+
+        rewritten.append(token)
+        index += 1
+
+    return rewritten, hostCemdbRoot
+
+
+def resolveCemdbHostRoot(rawValue: str, *, cwd: Path) -> str:
+    normalized = rawValue.strip()
+    if not normalized:
+        raise ConfigError("CEMDB root path cannot be empty.")
+
+    pathValue = Path(normalized).expanduser()
+    if not pathValue.is_absolute():
+        pathValue = (cwd / pathValue).resolve()
+    else:
+        pathValue = pathValue.resolve()
+
+    if not pathValue.exists():
+        raise ConfigError(f"CEMDB root path does not exist: '{pathValue}'.")
+
+    if not pathValue.is_dir():
+        raise ConfigError(f"CEMDB root path must be a directory: '{pathValue}'.")
+
+    return str(pathValue)
+
+
+def forwardedHasCemdbRoot(forwardedArgs: Sequence[str]) -> bool:
+    return any(
+        token == CEMDB_OPTION or token.startswith(f"{CEMDB_OPTION}=")
+        for token in forwardedArgs
+    )
+
+
+def hasCemdbBind(bindSpecs: Sequence[str]) -> bool:
+    for bindSpec in bindSpecs:
+        parts = bindSpec.split(":")
+        if len(parts) < 2:
+            continue
+        if parts[1] == CEMDB_CONTAINER_ROOT:
+            return True
+    return False
