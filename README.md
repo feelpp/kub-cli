@@ -274,8 +274,8 @@ Release versioning policy:
 
 PyPI publishing via GitHub environment:
 
-- Workflow: `.github/workflows/publish-pypi.yml`
-- Trigger: push a SemVer tag (for example `v0.2.0`) or run `workflow_dispatch`.
+- Workflow: `.github/workflows/publish.yml`
+- Trigger: publish a GitHub Release (SemVer tag, for example `v0.2.0`) or run `workflow_dispatch`.
 - Publish job uses GitHub `environment: pypi` and OpenID Connect trusted publishing (no PyPI API token needed in GitHub secrets).
 - Publishing is restricted to the official repository `feelpp/kub-cli`.
 
@@ -285,7 +285,7 @@ One-time setup:
 2. In PyPI Organizations, ensure project `kub-cli` belongs to organization `feelpp`.
 3. In the `kub-cli` PyPI project settings (under organization `feelpp`), add a trusted publisher bound to:
    - owner/repository: `feelpp/kub-cli`
-   - workflow: `publish-pypi.yml`
+   - workflow: `publish.yml`
    - environment: `pypi`
 4. Ensure the first trusted release tag already exists in the repository.
 
@@ -300,6 +300,9 @@ git add pyproject.toml src/kub_cli/__init__.py
 git commit -m "Release 0.1.1"
 git tag v0.1.1
 git push origin main --tags
+
+# 3) publish GitHub Release (this triggers PyPI workflow)
+gh release create v0.1.1 --generate-notes
 ```
 
 The workflow validates the tag format and checks that it matches `pyproject.toml` before building and publishing to PyPI.

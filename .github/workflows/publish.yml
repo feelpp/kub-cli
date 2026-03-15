@@ -3,12 +3,12 @@
 # SPDX-FileContributor: Cemosis
 # SPDX-License-Identifier: Apache-2.0
 
-name: Publish PyPI
+name: Publish to PyPI
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       tag:
@@ -16,13 +16,16 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: read
-
 jobs:
-  validate-release:
-    name: Validate release tag
+  publish:
+    name: Publish kub-cli
+    if: github.repository == 'feelpp/kub-cli'
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout release ref
         uses: actions/checkout@v4
@@ -43,23 +46,8 @@ jobs:
 
       - name: Validate SemVer and pyproject version
         run: |
-          TAG_VALUE="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          TAG_VALUE="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}"
           python scripts/validate_release_tag.py --tag "${TAG_VALUE}"
-
-  build-distributions:
-    name: Build sdist and wheel
-    needs: validate-release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout release ref
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
 
       - name: Install build tooling
         run: |
@@ -72,31 +60,16 @@ jobs:
       - name: Validate distributions
         run: twine check dist/*
 
-      - name: Upload distribution artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
-          if-no-files-found: error
-
-  publish-pypi:
-    name: Publish to PyPI
-    needs: build-distributions
-    if: github.repository == 'feelpp/kub-cli'
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    environment:
-      name: pypi
-    steps:
-      - name: Download distribution artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
-
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+
+      - name: Generate publish summary
+        if: always()
+        run: |
+          echo "## PyPI Publication Summary" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Package: kub-cli" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Repository: ${GITHUB_REPOSITORY}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Project URL: https://pypi.org/project/kub-cli/" >> "${GITHUB_STEP_SUMMARY}"
