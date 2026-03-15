@@ -400,6 +400,11 @@ class DockerCommandBuilder:
         if self.config.dockerFlags:
             command.extend(self.config.dockerFlags)
 
+        if not dockerFlagsContainUser(self.config.dockerFlags):
+            userValue = buildDockerUserValue()
+            if userValue is not None:
+                command.extend(["--user", userValue])
+
         for bindSpec in self.config.binds:
             command.extend(["--volume", bindSpec])
 
@@ -414,6 +419,20 @@ class DockerCommandBuilder:
         command.extend(forwardedArgs)
 
         return command
+
+
+def dockerFlagsContainUser(dockerFlags: Sequence[str]) -> bool:
+    return any(
+        flag == "--user" or flag.startswith("--user=")
+        for flag in dockerFlags
+    )
+
+
+def buildDockerUserValue() -> str | None:
+    if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
+        return None
+
+    return f"{os.getuid()}:{os.getgid()}"
 
 
 @dataclass(frozen=True)

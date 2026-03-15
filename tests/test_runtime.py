@@ -82,6 +82,7 @@ def testDockerCommandBuilderConstructsExpectedCommand(
 
     assert command[:4] == ["/usr/bin/docker", "run", "--rm", "--pull"]
     assert "always" in command
+    assert "--user" in command
     assert "--volume" in command
     assert "/data:/data" in command
     assert "/scratch:/scratch" in command
@@ -98,6 +99,25 @@ def testDockerCommandBuilderConstructsExpectedCommand(
         "--mesh",
         "fine",
     ]
+
+
+def testDockerUserFlagIsNotInjectedWhenExplicitlyProvided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = KubConfig(
+        runtime="docker",
+        imageDocker="ghcr.io/feelpp/ktirio-urban-building:master",
+        dockerFlags=("--user", "1234:1234"),
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    builder = DockerCommandBuilder(appName="kub-dataset", config=config)
+    command = builder.build(["push", "./data"])
+
+    assert command.count("--user") == 1
+    userIndex = command.index("--user")
+    assert command[userIndex + 1] == "1234:1234"
 
 
 def testDeriveApptainerOrasReference() -> None:

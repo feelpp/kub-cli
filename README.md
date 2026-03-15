@@ -115,8 +115,15 @@ Available on all three wrapper commands:
 - `--version`
 
 Wrapper options must be placed before the forwarded in-container command arguments.
-By default, `kub-cli` mounts the current working directory to `/cemdb` and forwards
-`--cemdb-root /cemdb` to wrapped apps.
+By default, `kub-cli` mounts the current working directory to `/cemdb`.
+If `--cemdb-root PATH` is provided and `PATH` does not exist, kub-cli creates it.
+kub-cli also creates `PATH/.kub` and sets `HOME=/cemdb` plus
+`KUB_CONFIG=/cemdb/.kub/config.toml` by default so dataset config files are writable in containers.
+By default, kub-cli also sets container working directory to `/cemdb` (override with `--pwd`).
+If an inner command argument includes `--cemdb-root <host-path>`, kub-cli rewrites it to
+`--cemdb-root /cemdb` and mounts the provided host path to `/cemdb`.
+For Docker runtime, kub-cli runs with host UID:GID by default to avoid bind-mount
+permission issues; override with explicit `--docker-flag --user ...` if needed.
 
 Use `--` to force all remaining arguments to be forwarded:
 

@@ -65,10 +65,11 @@ def testForwardingArgsWithDoubleDashApptainer(
     assert result.exit_code == 0
     command = captured["command"]  # type: ignore[assignment]
     assert command[-4:] == ["run", "case.yaml", "--mesh", "fine"]
-    assert "--cemdb-root" in command
-    assert "/cemdb" in command
+    assert "--cemdb-root" not in command
     bindValues = extractFlagValues(command, "--bind")
     assert any(value.endswith(":/cemdb") for value in bindValues)
+    pwdValues = extractFlagValues(command, "--pwd")
+    assert "/cemdb" in pwdValues
 
 
 def testForwardingArgsWithoutDoubleDashDocker(
@@ -103,11 +104,9 @@ def testForwardingArgsWithoutDoubleDashDocker(
     command = captured["command"]  # type: ignore[assignment]
     assert command[0] == "/usr/bin/docker"
     assert command[1] == "run"
-    assert command[-8:] == [
+    assert command[-6:] == [
         "ghcr.io/feelpp/ktirio-urban-building:master",
         "kub-dataset",
-        "--cemdb-root",
-        "/cemdb",
         "push",
         "./data",
         "--tag",
@@ -115,6 +114,11 @@ def testForwardingArgsWithoutDoubleDashDocker(
     ]
     volumeValues = extractFlagValues(command, "--volume")
     assert any(value.endswith(":/cemdb") for value in volumeValues)
+    envValues = extractFlagValues(command, "--env")
+    assert "HOME=/cemdb" in envValues
+    assert "KUB_CONFIG=/cemdb/.kub/config.toml" in envValues
+    workdirValues = extractFlagValues(command, "--workdir")
+    assert "/cemdb" in workdirValues
 
 
 def testBindOptionIsPassedToDockerAsVolume(
@@ -185,7 +189,7 @@ def testDryRunPrintsDockerCommandAndSkipsExecution(
     assert result.exit_code == 0
     assert called["value"] is False
     assert "docker run" in result.stdout
-    assert "kub-dashboard --cemdb-root /cemdb serve ./results" in result.stdout
+    assert "kub-dashboard serve ./results" in result.stdout
 
 
 def testSelectedDockerRuntimeWithoutRunnerIsReported(
@@ -356,10 +360,15 @@ def testExplicitWrapperCemdbRootIsMountedAndForwarded(
     command = captured["command"]  # type: ignore[assignment]
     volumeValues = extractFlagValues(command, "--volume")
     assert f"{hostCemdb.resolve()}:/cemdb" in volumeValues
-    assert command[-4:] == ["--cemdb-root", "/cemdb", "run", "case.yaml"]
+    assert command[-4:] == [
+        "ghcr.io/feelpp/ktirio-urban-building:master",
+        "kub-simulate",
+        "run",
+        "case.yaml",
+    ]
 
 
-def testMissingWrapperCemdbRootIsReported(
+def testMissingWrapperCemdbRootIsCreatedAndUsed(
     cliRunner: CliRunner,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -367,6 +376,14 @@ def testMissingWrapperCemdbRootIsReported(
     missingRoot = tmp_path / "missing-cemdb"
 
     monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
 
     result = cliRunner.invoke(
         datasetApp,
@@ -382,5 +399,55 @@ def testMissingWrapperCemdbRootIsReported(
         ],
     )
 
-    assert result.exit_code == 2
-    assert "CEMDB root path does not exist" in result.output
+    assert result.exit_code == 0
+    assert missingRoot.exists()
+    assert missingRoot.is_dir()
+    assert (missingRoot / ".kub").is_dir()
+
+    command = captured["command"]  # type: ignore[assignment]
+    volumeValues = extractFlagValues(command, "--volume")
+    assert f"{missingRoot.resolve()}:/cemdb" in volumeValues
+
+
+def testExplicitEnvOverridesDefaultCemdbEnv(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    hostCemdb = tmp_path / "cemdb"
+    hostCemdb.mkdir()
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        datasetApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "--cemdb-root",
+            str(hostCemdb),
+            "--env",
+            "HOME=/tmp/custom-home",
+            "--env",
+            "KUB_CONFIG=/tmp/custom-kub.toml",
+            "pull-simulator",
+            "--version",
+            "0.2.0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    envValues = extractFlagValues(command, "--env")
+    assert "HOME=/tmp/custom-home" in envValues
+    assert "KUB_CONFIG=/tmp/custom-kub.toml" in envValues

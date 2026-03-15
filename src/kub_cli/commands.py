@@ -25,6 +25,10 @@ from .runtime import KubAppRunner
 
 CEMDB_CONTAINER_ROOT = "/cemdb"
 CEMDB_OPTION = "--cemdb-root"
+HOME_ENV = "HOME"
+HOME_CONTAINER_ROOT = CEMDB_CONTAINER_ROOT
+KUB_CONFIG_ENV = "KUB_CONFIG"
+KUB_CONFIG_CONTAINER_PATH = "/cemdb/.kub/config.toml"
 
 
 @dataclass(frozen=True)
@@ -197,15 +201,24 @@ def prepareCemdbContext(
         selectedHostCemdb = str(runtimeCwd)
 
     hostCemdbRoot = resolveCemdbHostRoot(selectedHostCemdb, cwd=runtimeCwd)
-
-    if not forwardedHasCemdbRoot(rewrittenArgs):
-        rewrittenArgs = [CEMDB_OPTION, CEMDB_CONTAINER_ROOT, *rewrittenArgs]
+    ensureHostKubConfigDirectory(Path(hostCemdbRoot))
 
     updatedBinds = list(options.binds)
     if not hasCemdbBind(updatedBinds):
         updatedBinds.append(f"{hostCemdbRoot}:{CEMDB_CONTAINER_ROOT}")
 
-    return replace(options, binds=tuple(updatedBinds)), rewrittenArgs
+    updatedEnvVars = list(options.envVars)
+    ensureEnvAssignment(updatedEnvVars, HOME_ENV, HOME_CONTAINER_ROOT)
+    ensureEnvAssignment(updatedEnvVars, KUB_CONFIG_ENV, KUB_CONFIG_CONTAINER_PATH)
+
+    resolvedWorkdir = options.pwd if options.pwd is not None else CEMDB_CONTAINER_ROOT
+
+    return replace(
+        options,
+        binds=tuple(updatedBinds),
+        envVars=tuple(updatedEnvVars),
+        pwd=resolvedWorkdir,
+    ), rewrittenArgs
 
 
 def rewriteForwardedCemdbArgs(forwardedArgs: Sequence[str]) -> tuple[list[str], str | None]:
@@ -264,19 +277,17 @@ def resolveCemdbHostRoot(rawValue: str, *, cwd: Path) -> str:
         pathValue = pathValue.resolve()
 
     if not pathValue.exists():
-        raise ConfigError(f"CEMDB root path does not exist: '{pathValue}'.")
+        try:
+            pathValue.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise ConfigError(
+                f"Unable to create CEMDB root path '{pathValue}': {error}"
+            ) from error
 
     if not pathValue.is_dir():
         raise ConfigError(f"CEMDB root path must be a directory: '{pathValue}'.")
 
     return str(pathValue)
-
-
-def forwardedHasCemdbRoot(forwardedArgs: Sequence[str]) -> bool:
-    return any(
-        token == CEMDB_OPTION or token.startswith(f"{CEMDB_OPTION}=")
-        for token in forwardedArgs
-    )
 
 
 def hasCemdbBind(bindSpecs: Sequence[str]) -> bool:
@@ -285,5 +296,31 @@ def hasCemdbBind(bindSpecs: Sequence[str]) -> bool:
         if len(parts) < 2:
             continue
         if parts[1] == CEMDB_CONTAINER_ROOT:
+            return True
+    return False
+
+
+def ensureHostKubConfigDirectory(hostCemdbRoot: Path) -> None:
+    configDir = hostCemdbRoot / ".kub"
+    try:
+        configDir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ConfigError(
+            f"Unable to create CEMDB config directory '{configDir}': {error}"
+        ) from error
+
+
+def ensureEnvAssignment(assignments: list[str], key: str, value: str) -> None:
+    if hasEnvAssignment(assignments, key):
+        return
+    assignments.append(f"{key}={value}")
+
+
+def hasEnvAssignment(assignments: Sequence[str], key: str) -> bool:
+    for entry in assignments:
+        if "=" not in entry:
+            continue
+        entryKey = entry.split("=", maxsplit=1)[0].strip()
+        if entryKey == key:
             return True
     return False
