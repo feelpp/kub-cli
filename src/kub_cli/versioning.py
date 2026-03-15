@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 import re
 
@@ -45,6 +46,8 @@ class BumpResult:
     newVersion: str
     pyprojectPath: Path
     initPath: Path
+    changelogPath: Path
+    changelogUpdated: bool
     changed: bool
 
 
@@ -98,9 +101,11 @@ def bumpProjectVersion(
     part: str,
     toVersion: str | None,
     dryRun: bool,
+    releaseDate: str | None = None,
 ) -> BumpResult:
     pyprojectPath = projectRoot / "pyproject.toml"
     initPath = projectRoot / "src" / "kub_cli" / "__init__.py"
+    changelogPath = projectRoot / "CHANGELOG.md"
 
     oldVersion = readPyprojectVersion(pyprojectPath)
     oldSemanticVersion = parseSemanticVersion(oldVersion)
@@ -111,6 +116,8 @@ def bumpProjectVersion(
         newVersion = bumpSemanticVersion(oldSemanticVersion, part).toString()
 
     changed = oldVersion != newVersion
+    changelogUpdated = False
+    effectiveReleaseDate = normalizeReleaseDate(releaseDate)
 
     if not dryRun and changed:
         replaceVersionInFile(
@@ -125,12 +132,21 @@ def bumpProjectVersion(
             newVersion=newVersion,
             valueLabel="__init__ fallback version",
         )
+        if changelogPath.exists():
+            updateChangelogForRelease(
+                changelogPath=changelogPath,
+                newVersion=newVersion,
+                releaseDate=effectiveReleaseDate,
+            )
+            changelogUpdated = True
 
     return BumpResult(
         oldVersion=oldVersion,
         newVersion=newVersion,
         pyprojectPath=pyprojectPath,
         initPath=initPath,
+        changelogPath=changelogPath,
+        changelogUpdated=changelogUpdated,
         changed=changed,
     )
 
@@ -173,3 +189,41 @@ def replaceVersionInFile(
         )
 
     filePath.write_text(updatedContent, encoding="utf-8")
+
+
+def normalizeReleaseDate(rawValue: str | None) -> str:
+    if rawValue is None:
+        return date.today().isoformat()
+
+    normalized = rawValue.strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", normalized) is None:
+        raise KubCliError(
+            f"Invalid release date '{rawValue}'. Expected YYYY-MM-DD."
+        )
+
+    return normalized
+
+
+def updateChangelogForRelease(
+    *,
+    changelogPath: Path,
+    newVersion: str,
+    releaseDate: str,
+) -> None:
+    content = changelogPath.read_text(encoding="utf-8")
+    match = re.search(r"(?m)^##\s+Unreleased\s*$", content)
+
+    if match is None:
+        raise KubCliError(
+            f"Unable to update changelog at '{changelogPath}': "
+            "missing '## Unreleased' section."
+        )
+
+    releaseHeading = f"## {newVersion} - {releaseDate}"
+    updatedContent = (
+        content[: match.start()]
+        + "## Unreleased\n\n"
+        + releaseHeading
+        + content[match.end() :]
+    )
+    changelogPath.write_text(updatedContent, encoding="utf-8")

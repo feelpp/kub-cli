@@ -21,6 +21,7 @@ from .versioning import bumpProjectVersion
 CONTEXT_SETTINGS = {
     "allow_extra_args": True,
     "ignore_unknown_options": True,
+    "allow_interspersed_args": False,
 }
 
 
@@ -248,6 +249,10 @@ def createMetaApp() -> typer.Typer:
 
         typer.echo(f"pyproject: {result.pyprojectPath}")
         typer.echo(f"fallback: {result.initPath}")
+        if result.changelogUpdated:
+            typer.echo(f"changelog: {result.changelogPath}")
+        elif result.changelogPath.exists():
+            typer.echo(f"changelog: {result.changelogPath} (unchanged)")
 
     return app
 

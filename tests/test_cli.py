@@ -249,3 +249,47 @@ def testAutoRuntimeFallsBackToDocker(
     assert result.exit_code == 0
     command = captured["command"]  # type: ignore[assignment]
     assert command[0] == "/usr/bin/docker"
+
+
+def testInnerVersionOptionIsForwardedAfterFirstArgument(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        datasetApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "pull-simulator",
+            "--version",
+            "0.2.0",
+            "--cemdb-root",
+            "cemdb",
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "kub-cli 0." not in result.stdout
+
+    command = captured["command"]  # type: ignore[assignment]
+    assert command[-6:] == [
+        "pull-simulator",
+        "--version",
+        "0.2.0",
+        "--cemdb-root",
+        "cemdb",
+        "--force",
+    ]

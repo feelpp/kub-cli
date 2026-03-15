@@ -13,6 +13,8 @@ SPDX-License-Identifier: Apache-2.0
 - Added GitHub Actions workflow for PyPI publishing via GitHub environment `pypi` (`.github/workflows/publish.yml`)
 - Added release validation script enforcing `vMAJOR.MINOR.PATCH` tags and tag/version matching
 - Restricted publish workflow to official `feelpp/kub-cli` repository and documented PyPI organization target `feelpp`
+- Fixed wrapper argument forwarding so app flags like `--version` after the first inner command token are passed to in-container apps
+- Updated `kub-cli bump` to automatically rotate `CHANGELOG.md` (`Unreleased` -> released section with date)
 
 ## 0.1.0 - 2026-03-14
 

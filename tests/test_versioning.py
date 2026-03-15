@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -43,6 +44,16 @@ def writeProjectLayout(projectRoot: Path, versionValue: str) -> None:
         ),
         encoding="utf-8",
     )
+    (projectRoot / "CHANGELOG.md").write_text(
+        (
+            "# Changelog\n\n"
+            "## Unreleased\n\n"
+            "- Pending change\n\n"
+            f"## {versionValue} - 2026-03-01\n\n"
+            "- Previous release\n"
+        ),
+        encoding="utf-8",
+    )
 
 
 def testBumpProjectVersionPatchUpdatesFiles(tmp_path: Path) -> None:
@@ -54,6 +65,7 @@ def testBumpProjectVersionPatchUpdatesFiles(tmp_path: Path) -> None:
         part="patch",
         toVersion=None,
         dryRun=False,
+        releaseDate="2026-03-15",
     )
 
     assert result.oldVersion == "1.2.3"
@@ -67,6 +79,12 @@ def testBumpProjectVersionPatchUpdatesFiles(tmp_path: Path) -> None:
 
     assert 'version = "1.2.4"' in pyprojectContent
     assert '__version__ = "1.2.4"' in initContent
+    assert result.changelogUpdated is True
+
+    changelogContent = (projectRoot / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## Unreleased" in changelogContent
+    assert "## 1.2.4 - 2026-03-15" in changelogContent
+    assert "- Pending change" in changelogContent
 
 
 def testBumpProjectVersionDryRunDoesNotWrite(tmp_path: Path) -> None:
@@ -78,6 +96,7 @@ def testBumpProjectVersionDryRunDoesNotWrite(tmp_path: Path) -> None:
         part="minor",
         toVersion=None,
         dryRun=True,
+        releaseDate="2026-03-15",
     )
 
     assert result.oldVersion == "0.9.0"
@@ -91,6 +110,10 @@ def testBumpProjectVersionDryRunDoesNotWrite(tmp_path: Path) -> None:
 
     assert 'version = "0.9.0"' in pyprojectContent
     assert '__version__ = "0.9.0"' in initContent
+    assert result.changelogUpdated is False
+
+    changelogContent = (projectRoot / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## 0.9.0 - 2026-03-01" in changelogContent
 
 
 def testBumpProjectVersionToExplicitValue(tmp_path: Path) -> None:
@@ -102,6 +125,7 @@ def testBumpProjectVersionToExplicitValue(tmp_path: Path) -> None:
         part="patch",
         toVersion="2.5.9",
         dryRun=False,
+        releaseDate="2026-03-15",
     )
 
     assert result.oldVersion == "2.1.0"
@@ -140,6 +164,9 @@ def testMetaBumpCommandUpdatesVersion(cliRunner: CliRunner, tmp_path: Path) -> N
     pyprojectContent = (projectRoot / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = "3.1.0"' in pyprojectContent
 
+    changelogContent = (projectRoot / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert re.search(r"^## 3\.1\.0 - \d{4}-\d{2}-\d{2}$", changelogContent, re.MULTILINE)
+
 
 def testMetaBumpCommandDryRun(cliRunner: CliRunner, tmp_path: Path) -> None:
     projectRoot = tmp_path / "repo"
@@ -155,3 +182,18 @@ def testMetaBumpCommandDryRun(cliRunner: CliRunner, tmp_path: Path) -> None:
 
     pyprojectContent = (projectRoot / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = "4.4.4"' in pyprojectContent
+
+
+def testBumpWithoutUnreleasedSectionRaises(tmp_path: Path) -> None:
+    projectRoot = tmp_path / "repo"
+    writeProjectLayout(projectRoot, "1.0.0")
+    (projectRoot / "CHANGELOG.md").write_text("# Changelog\n\n## 1.0.0 - 2026-03-01\n", encoding="utf-8")
+
+    with pytest.raises(KubCliError, match="missing '## Unreleased' section"):
+        bumpProjectVersion(
+            projectRoot=projectRoot,
+            part="patch",
+            toVersion=None,
+            dryRun=False,
+            releaseDate="2026-03-15",
+        )
