@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<url>
+<loc>https://feelpp.github.io/kub-cli/kub-cli/latest/tutorial/apptainer-runtime-workflow.html</loc>
+<lastmod>2026-03-17T15:50:41.033Z</lastmod>
+</url>
+<url>
+<loc>https://feelpp.github.io/kub-cli/kub-cli/latest/tutorial/command-cheatsheet.html</loc>
+<lastmod>2026-03-17T15:50:41.033Z</lastmod>
+</url>
+<url>
+<loc>https://feelpp.github.io/kub-cli/kub-cli/latest/tutorial/dashboard-workflow.html</loc>
+<lastmod>2026-03-17T15:50:41.033Z</lastmod>
+</url>
+<url>
+<loc>https://feelpp.github.io/kub-cli/kub-cli/latest/tutorial/dataset-workflow.html</loc>
+<lastmod>2026-03-17T15:50:41.033Z</lastmod>
+</url>
+<url>
+<loc>https://feelpp.github.io/kub-cli/kub-cli/latest/tutorial/index.html</loc>
+<lastmod>2026-03-17T15:50:41.033Z</lastmod>
+</url>
+<url>
+<loc>https://feelpp.github.io/kub-cli/kub-cli/latest/tutorial/prerequisites.html</loc>
+<lastmod>2026-03-17T15:50:41.033Z</lastmod>
+</url>
+<url>
+<loc>https://feelpp.github.io/kub-cli/kub-cli/latest/tutorial/run-simulation-kub-simulate.html</loc>
+<lastmod>2026-03-17T15:50:41.033Z</lastmod>
+</url>
+<url>
+<loc>https://feelpp.github.io/kub-cli/kub-cli/latest/tutorial/validation-and-troubleshooting.html</loc>
+<lastmod>2026-03-17T15:50:41.033Z</lastmod>
+</url>
+</urlset>
