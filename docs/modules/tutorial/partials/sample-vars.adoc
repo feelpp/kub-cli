@@ -1,0 +1,9 @@
+:tutorial_location: arz
+:tutorial_version: 0.1.0
+:tutorial_simulator_version: 0.2.0
+:tutorial_cemdb_root: cemdb
+:tutorial_cemdb_locations: cemdb/locations
+:tutorial_np: 128
+:tutorial_partition: public
+:tutorial_kub_docker_image: ghcr.io/feelpp/ktirio-urban-building:master
+:tutorial_kub_apptainer_image_ref: oras://ghcr.io/feelpp/ktirio-urban-building:master-sif

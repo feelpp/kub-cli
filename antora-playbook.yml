@@ -1,0 +1,25 @@
+site:
+  title: KUB CLI
+  url: https://feelpp.github.io/kub-cli/
+  start_page: kub-cli:tutorial:index.adoc
+content:
+  sources:
+    - url: .
+      start_path: docs
+      branches:
+        - HEAD
+asciidoc:
+  extensions:
+    - '@feelpp/asciidoctor-extensions'
+    - asciidoctor-kroki
+    - '@djencks/asciidoctor-template'
+runtime:
+  log:
+    level: debug
+output:
+  clean: true
+  dir: public
+ui:
+  bundle:
+    url: https://github.com/feelpp/antora-ui/releases/latest/download/ui-bundle.zip
+    snapshot: true

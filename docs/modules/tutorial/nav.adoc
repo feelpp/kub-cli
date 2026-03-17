@@ -1,0 +1,8 @@
+* xref:index.adoc[CLI Tutorial]
+** xref:prerequisites.adoc[Prerequisites]
+** xref:dataset-workflow.adoc[Dataset Workflow]
+** xref:run-simulation-kub-simulate.adoc[Run Simulation]
+** xref:apptainer-runtime-workflow.adoc[Apptainer Runtime]
+** xref:dashboard-workflow.adoc[Dashboard Workflow]
+** xref:validation-and-troubleshooting.adoc[Validation and Troubleshooting]
+** xref:command-cheatsheet.adoc[Command Cheatsheet]

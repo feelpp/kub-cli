@@ -1,0 +1,89 @@
+= KUB CLI Tutorial
+:navtitle: Tutorial
+:description: End-user command-line tutorial for dataset operations, simulation submission, and dashboard exploration
+:page-tags: tutorial, cli, dataset, simulation, dashboard
+:sectanchors:
+:sectnums:
+
+include::partial$sample-vars.adoc[]
+
+[.lead]
+This tutorial is a practical, command-first path for Ktirio Urban Building users: prepare datasets with `kub-dataset`, run simulations with `kub-simulate`, and inspect outputs with `kub-dashboard`.
+
+[IMPORTANT]
+====
+The simulation execution path in this tutorial is `kub-simulate` only.
+Do not run `feelpp_kub_cem` directly in this end-user workflow.
+====
+
+== At a Glance
+
+[cols="1,3",options="header"]
+|===
+|Item |Value
+
+|Target location
+|`{tutorial_location}`
+
+|Target dataset version
+|`{tutorial_version}`
+
+|Target simulator dataset version
+|`{tutorial_simulator_version}`
+
+|CEMDB locations root
+|`{tutorial_cemdb_locations}`
+
+|Default MPI tasks in examples
+|`{tutorial_np}`
+
+|===
+
+== Workflow Map
+
+[graphviz, target=tutorial-flow, format=svg]
+....
+digraph TutorialFlow {
+  rankdir=LR;
+  node [shape=box, style="rounded,filled", fillcolor="#f8fafc", color="#334155", fontname="Helvetica"];
+  dataset [label="1) kub-dataset\nlist / pull / summary"];
+  simulate [label="2) kub-simulate\npreprocess / run / status"];
+  validate [label="3) validate outputs\nmanifest + run checks"];
+  dashboard [label="4) kub-dashboard\nindex + serve"];
+
+  dataset -> simulate -> validate -> dashboard;
+}
+....
+
+== Step Cards
+
+[cols="a,a,a,a", frame=none, grid=none]
+|===
+|*1. Dataset Setup* +
+Use `kub-dataset` to list sources, pull a location version, and validate manifests before submission.
+
+|*2. Simulation Submit* +
+Use `kub-simulate preprocess` and `kub-simulate run`; do not run `feelpp_kub_cem` directly in this workflow.
+
+|*3. Runtime Choice* +
+This tutorial uses Apptainer runtime by default (`kub-simulate --runtime apptainer`) with either Slurm or local launchers, and you can switch to Docker via `KUB_RUNTIME`/`--runtime docker`.
+
+|*4. Dashboard Review* +
+Use `kub-dashboard index` and `kub-dashboard serve` to inspect run outputs and location summaries.
+|===
+
+== What You Will Build
+
+- A local, versioned dataset under `cemdb/locations/<location>/vX.Y.Z`
+- A simulation run tracked under `simulations/single/run_*`
+- A browsable dashboard view for runs and location-level data
+
+== Tutorial Path
+
+1. xref:prerequisites.adoc[Check prerequisites and environment]
+2. xref:dataset-workflow.adoc[Prepare dataset and verify local state]
+3. xref:run-simulation-kub-simulate.adoc[Submit preprocessing and simulation with kub-simulate (Apptainer profiles)]
+4. xref:apptainer-runtime-workflow.adoc[Run kub-simulate with Apptainer local/slurm launchers]
+5. xref:dashboard-workflow.adoc[Index and serve dashboard pages]
+6. xref:validation-and-troubleshooting.adoc[Validate manifests and troubleshoot]
+7. xref:command-cheatsheet.adoc[Use the compact command cheatsheet]

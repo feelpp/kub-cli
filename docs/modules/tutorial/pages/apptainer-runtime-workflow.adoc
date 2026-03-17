@@ -1,0 +1,131 @@
+= Apptainer Runtime Workflow
+:description: Run kub-simulate with the kub-cli Apptainer wrapper settings
+:page-tags: tutorial, apptainer, simulation, kub-simulate
+:sectanchors:
+:sectnums:
+
+include::partial$sample-vars.adoc[]
+
+[.lead]
+This page demonstrates wrapper-level runtime configuration for Apptainer and how it affects
+`kub-simulate preprocess` and `kub-simulate run`.
+
+include::partial$cemdb-root-defaults.adoc[]
+
+== 1. Pull or Refresh the Default Apptainer Image
+
+[source,bash,subs=attributes+]
+----
+kub-img pull --runtime apptainer --image ./kub-master.sif {tutorial_kub_apptainer_image_ref}
+kub-img path --runtime apptainer --image ./kub-master.sif
+----
+
+== 2. Validate the Wrapper Runtime Selection
+
+[source,bash,subs=attributes+]
+----
+export KUB_RUNTIME=apptainer
+export KUB_IMAGE_APPTAINER=./kub-master.sif
+
+kub-simulate --runtime apptainer --help
+kub-img info --runtime apptainer --image ./kub-master.sif --json
+----
+
+== 3. Configure Simulation Profiles
+
+[source,bash,subs=attributes+]
+----
+# Create .kub-simulate.toml in the current directory
+kub-simulate --runtime apptainer config init
+
+# Shared default for preprocess/run
+kub-simulate --runtime apptainer config set cemdb_root {tutorial_cemdb_locations}
+
+# Apptainer Slurm profile
+kub-simulate --runtime apptainer config set launcher slurm --profile-target apptainer-slurm
+kub-simulate --runtime apptainer config set partition {tutorial_partition} --profile-target apptainer-slurm
+kub-simulate --runtime apptainer config set runtime apptainer --profile-target apptainer-slurm
+
+# Apptainer local profile
+kub-simulate --runtime apptainer config set launcher local --profile-target apptainer-local
+kub-simulate --runtime apptainer config set runtime apptainer --profile-target apptainer-local
+
+kub-simulate --runtime apptainer config show
+----
+
+== 4. Run Preprocessing in Apptainer Wrapper Mode
+
+Slurm launcher (`apptainer-slurm` profile):
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer --image ./kub-master.sif preprocess {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-slurm \
+  --partitions 32 64 {tutorial_np}
+----
+
+Local launcher (`apptainer-local` profile):
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer --image ./kub-master.sif preprocess {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-local \
+  --partitions 32 64 {tutorial_np}
+----
+
+== 5. Run the Simulation
+
+Slurm launcher (`apptainer-slurm` profile):
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer --image ./kub-master.sif run {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-slurm \
+  --np {tutorial_np}
+----
+
+Local launcher (`apptainer-local` profile):
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer --image ./kub-master.sif run {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-local \
+  --np {tutorial_np}
+----
+
+== 6. Optional Wrapper-level Runtime Flags
+
+Use wrapper options for bind mounts and env forwarding:
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer --image ./kub-master.sif \
+  --bind /scratch/work:/work \
+  --env OMP_NUM_THREADS=1 \
+  run {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-local \
+  --np {tutorial_np}
+----
+
+Use `--apptainer-flag` if you need a lower-level runtime knob not exposed by kub-cli today.
+
+== 7. Inspect Status and Outputs
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer status {tutorial_location} \
+  --version {tutorial_version} \
+  --cemdb-root {tutorial_cemdb_locations} \
+  --last 10
+
+find {tutorial_cemdb_locations}/{tutorial_location}/v{tutorial_version}/simulations/single -maxdepth 2 -name manifest.json | sort
+----
+
+== Next Step
+
+Proceed to xref:dashboard-workflow.adoc[Dashboard Workflow].

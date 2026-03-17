@@ -1,0 +1,20 @@
+[source,bash,subs=attributes+]
+----
+kub-dataset --help
+kub-simulate --help
+kub-dashboard --help
+kub-img --help
+
+which apptainer || true
+which docker || true
+which mpiexec || which mpirun || true
+which sbatch || true
+which squeue || true
+----
+
+[.note]
+====
+`kub-cli` requires one of `apptainer` or `docker` to be available on `PATH` when using local runs.
+If you are using containerized simulation through the `docker` runtime, install Docker Engine.
+If you are using `apptainer`, install Apptainer on the host.
+====

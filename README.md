@@ -47,13 +47,13 @@ Default behavior:
 ### From source
 
 ```bash
-python -m pip install .
+uv pip install .
 ```
 
 ### Editable install for development
 
 ```bash
-python -m pip install -e .[dev]
+uv pip install -e .[dev]
 ```
 
 ## Quick start

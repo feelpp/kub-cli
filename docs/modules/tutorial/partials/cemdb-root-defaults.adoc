@@ -1,0 +1,12 @@
+[NOTE]
+====
+`--cemdb-root` can be omitted in many cases:
+
+- If the current directory contains `./cemdb`, `kub-dataset` and `kub-simulate` use the default `cemdb/locations`.
+- `kub-dashboard` auto-detects `./cemdb`.
+
+`CEMDB_ROOT` environment variable:
+
+- `kub-dashboard` uses `CEMDB_ROOT` as its default CEMDB path.
+- For `kub-dataset` and `kub-simulate`, use `--cemdb-root` when your data is not under `./cemdb/locations`.
+====

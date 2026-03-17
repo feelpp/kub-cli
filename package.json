@@ -1,0 +1,26 @@
+{
+  "private": true,
+  "name": "kub-cli",
+  "description": "Documentation build assets for kub-cli",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "author": "The KUB Team",
+  "scripts": {
+    "antora": "antora --stacktrace generate --clean antora-playbook.yml",
+    "start": "http-server public/ -d -i",
+    "validate": "antora --stacktrace generate --clean antora-playbook.yml",
+    "prose": "write-good --parse docs/modules/tutorial/pages/*.adoc"
+  },
+  "dependencies": {
+    "@antora/cli": "^3.1.10",
+    "@antora/site-generator-default": "^3.1.10",
+    "@asciidoctor/core": "2.2.8",
+    "@feelpp/asciidoctor-extensions": "1.0.0-rc.15",
+    "@djencks/asciidoctor-template": "0.0.3",
+    "handlebars-utils": "1.0.6",
+    "asciidoctor": "2.2.8",
+    "asciidoctor-kroki": "^0.18.1",
+    "http-server": "^14.1.1",
+    "write-good": "^1.0.8"
+  }
+}

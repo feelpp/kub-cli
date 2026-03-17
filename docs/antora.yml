@@ -1,0 +1,10 @@
+name: kub-cli
+title: "KUB CLI"
+version: latest
+start_page: tutorial:index.adoc
+nav:
+- modules/tutorial/nav.adoc
+asciidoc:
+  extensions:
+  - '@feelpp/asciidoctor-extensions'
+  - asciidoctor-kroki
