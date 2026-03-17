@@ -187,3 +187,66 @@ def testInvalidRuntimeRaisesError(tmp_path: Path) -> None:
             env={"KUB_RUNTIME": "podman"},
             userConfigPath=tmp_path / "missing-user.toml",
         )
+
+
+def testListSettingsAreAdditiveMergedWithDeduplication(tmp_path: Path) -> None:
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    userConfig = tmp_path / "home" / ".config" / "kub-cli" / "config.toml"
+    projectConfig = cwd / ".kub-cli.toml"
+
+    writeText(
+        userConfig,
+        """
+[kub_cli]
+bind = ["/a:/a", "/b:/b"]
+apptainer_flags = ["--nv", "--writable-tmpfs"]
+docker_flags = ["--pull", "always"]
+runtime = "apptainer"
+""".strip(),
+    )
+
+    writeText(
+        projectConfig,
+        """
+[kub_cli]
+bind = ["/b:/b", "/c:/c"]
+apptainer_flags = ["--writable-tmpfs", "--containall"]
+docker_flags = ["--pull", "always", "--network", "host"]
+""".strip(),
+    )
+
+    config = loadKubConfig(
+        cwd=cwd,
+        env={
+            "KUB_BIND": "/c:/c,/d:/d",
+            "KUB_APPTAINER_FLAGS": "--containall --fakeroot",
+            "KUB_DOCKER_FLAGS": "--network host --rm",
+            "KUB_RUNTIME": "docker",
+        },
+        overrides=KubConfigOverrides(
+            binds=("/d:/d", "/e:/e"),
+            apptainerFlags=("--fakeroot", "--cleanenv"),
+            dockerFlags=("--rm", "--init"),
+        ),
+        userConfigPath=userConfig,
+    )
+
+    assert config.runtime == "docker"
+    assert config.binds == ("/a:/a", "/b:/b", "/c:/c", "/d:/d", "/e:/e")
+    assert config.apptainerFlags == (
+        "--nv",
+        "--writable-tmpfs",
+        "--containall",
+        "--fakeroot",
+        "--cleanenv",
+    )
+    assert config.dockerFlags == (
+        "--pull",
+        "always",
+        "--network",
+        "host",
+        "--rm",
+        "--init",
+    )

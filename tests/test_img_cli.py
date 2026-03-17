@@ -49,6 +49,31 @@ def testApptainerPullDryRunUsesOrasSource(
     assert "docker://" not in result.output
 
 
+def testApptainerPullDryRunWorksWithDefaults(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "pull",
+            "--runtime",
+            "apptainer",
+            "--dry-run",
+        ],
+    )
+
+    expectedImage = str((tmp_path / "kub-master.sif").resolve())
+    assert result.exit_code == 0
+    assert "apptainer pull" in result.output
+    assert expectedImage in result.output
+    assert "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif" in result.output
+
+
 def testDockerPullCommandBuildsExpectedArguments(
     cliRunner: CliRunner,
     monkeypatch: pytest.MonkeyPatch,
@@ -184,3 +209,51 @@ def testApptainerPullRejectsDockerSource(
 
     assert result.exit_code == 2
     assert "must use oras://" in result.output
+
+
+def testPathAutoResolvesToDockerWhenApptainerUnavailable(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fakeWhich(name: str) -> str | None:
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "path",
+            "--runtime",
+            "auto",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.output.strip() == "ghcr.io/feelpp/ktirio-urban-building:master"
+
+
+def testAppsAutoRejectsWhenRuntimeResolvesToDocker(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fakeWhich(name: str) -> str | None:
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "apps",
+            "--runtime",
+            "auto",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "only available with Apptainer runtime" in result.output

@@ -12,20 +12,22 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Sequence
 
 from .config import (
     DEFAULT_APPTAINER_IMAGE,
     DEFAULT_DOCKER_IMAGE,
     KubConfig,
     SUPPORTED_RUNTIMES,
-    looksLikeContainerReference,
 )
-from .errors import ImageNotFoundError, KubCliError, RunnerNotFoundError, RuntimeSelectionError
+from .errors import KubCliError, RunnerNotFoundError, RuntimeSelectionError
+from .image_resolution import resolveApptainerExecutionImage, resolveDockerExecutionImage
+from . import image_resolution as imageResolution
 from .logging_utils import LOGGER, formatCommand
 
 
 ResolvedRuntime = Literal["apptainer", "docker"]
+DASHBOARD_APP_NAME = "kub-dashboard"
 
 
 @dataclass(frozen=True)
@@ -38,48 +40,9 @@ class RuntimeResolution:
 
 
 def deriveApptainerOrasReference(dockerImageReference: str) -> str:
-    """Derive Apptainer ORAS source from a Docker image reference.
+    """Backward-compatible export for ORAS derivation."""
 
-    Example:
-    `ghcr.io/org/app:master` -> `oras://ghcr.io/org/app:master-sif`
-    """
-
-    normalized = dockerImageReference.strip()
-    if not normalized:
-        raise KubCliError("Docker image reference cannot be empty.")
-
-    if "@" in normalized:
-        raise KubCliError(
-            "Cannot derive Apptainer ORAS reference from digest-based Docker image. "
-            "Provide a tag-based Docker image reference."
-        )
-
-    if normalized.startswith("oras://"):
-        return normalized
-
-    if "://" in normalized:
-        raise KubCliError(
-            "Docker image reference for ORAS derivation must not include a URI scheme. "
-            "Use format like ghcr.io/org/image:tag"
-        )
-
-    lastSlash = normalized.rfind("/")
-    lastColon = normalized.rfind(":")
-
-    if lastColon > lastSlash:
-        repository = normalized[:lastColon]
-        tag = normalized[lastColon + 1 :]
-    else:
-        repository = normalized
-        tag = "latest"
-
-    if not repository or not tag:
-        raise KubCliError(
-            "Invalid Docker image reference for ORAS derivation. "
-            "Expected format like ghcr.io/org/image:tag"
-        )
-
-    return f"oras://{repository}:{tag}-sif"
+    return imageResolution.deriveApptainerOrasReference(dockerImageReference)
 
 
 def getRuntimeCandidateImage(config: KubConfig, runtime: ResolvedRuntime) -> str | None:
@@ -183,62 +146,6 @@ def tryResolveRunnerExecutable(runnerValue: str) -> str | None:
     return shutil.which(normalized)
 
 
-def resolveApptainerExecutionImage(config: KubConfig) -> str:
-    """Resolve Apptainer execution image reference (local path or oras:// URI)."""
-
-    imageReference = getRuntimeCandidateImage(config, "apptainer")
-    if imageReference is None:
-        raise ImageNotFoundError(
-            "No Apptainer image configured for runtime 'apptainer'. "
-            "Set --image, KUB_IMAGE_APPTAINER, or KUB_IMAGE."
-        )
-
-    normalizedReference = imageReference.strip()
-
-    if normalizedReference.startswith("docker://"):
-        raise ImageNotFoundError(
-            "Apptainer image reference must use oras:// (or a local .sif path), "
-            "not docker://."
-        )
-
-    if normalizedReference.startswith("oras://"):
-        return normalizedReference
-
-    if "://" in normalizedReference:
-        raise ImageNotFoundError(
-            "Unsupported Apptainer image URI scheme. "
-            "Use oras://<registry>/<image>:<tag>-sif or a local .sif path."
-        )
-
-    if looksLikeContainerReference(normalizedReference):
-        return f"oras://{normalizedReference}"
-
-    imagePath = Path(normalizedReference).expanduser()
-
-    if not imagePath.exists():
-        raise ImageNotFoundError(f"Container image not found: '{imagePath}'.")
-
-    if imagePath.is_dir():
-        raise ImageNotFoundError(
-            f"Container image must be a file, got directory: '{imagePath}'."
-        )
-
-    return str(imagePath)
-
-
-def resolveDockerExecutionImage(config: KubConfig) -> str:
-    """Resolve Docker image reference used at runtime execution."""
-
-    imageReference = getRuntimeCandidateImage(config, "docker")
-    if imageReference is None:
-        raise ImageNotFoundError(
-            "No Docker image configured for runtime 'docker'. "
-            "Set --image, KUB_IMAGE_DOCKER, or KUB_IMAGE."
-        )
-
-    return imageReference
-
-
 def resolveRuntimeForExecution(config: KubConfig) -> RuntimeResolution:
     """Resolve runtime backend, executable, and image for application execution."""
 
@@ -319,14 +226,23 @@ def resolveAutoRuntime(config: KubConfig) -> RuntimeResolution:
         dockerRunnerValue = getRunnerValue(config, "docker")
         dockerRunner = tryResolveRunnerExecutable(dockerRunnerValue)
         if dockerRunner is not None:
-            return RuntimeResolution(
-                runtime="docker",
-                runnerPath=dockerRunner,
-                imageReference=dockerImage,
+            try:
+                imageReference = resolveDockerExecutionImage(
+                    config,
+                    strictImageOverride=False,
+                    strictLegacyImage=False,
+                )
+                return RuntimeResolution(
+                    runtime="docker",
+                    runnerPath=dockerRunner,
+                    imageReference=imageReference,
+                )
+            except KubCliError as error:
+                diagnostics.append(f"Docker not selected: {error}")
+        else:
+            diagnostics.append(
+                "Docker not selected: runner not available in PATH or not executable."
             )
-        diagnostics.append(
-            "Docker not selected: runner not available in PATH or not executable."
-        )
     else:
         diagnostics.append(
             "Docker not selected: no Docker image configured."
@@ -376,6 +292,26 @@ class ApptainerCommandBuilder:
 
         return command
 
+    def buildExec(self, forwardedArgs: Sequence[str]) -> list[str]:
+        runner = self.resolveRunner()
+        image = self.resolveImage()
+
+        command: list[str] = [runner, "exec"]
+
+        if self.config.apptainerFlags:
+            command.extend(self.config.apptainerFlags)
+
+        for bindSpec in self.config.binds:
+            command.extend(["--bind", bindSpec])
+
+        if self.config.workdir:
+            command.extend(["--pwd", self.config.workdir])
+
+        command.extend([image, self.appName])
+        command.extend(forwardedArgs)
+
+        return command
+
 
 @dataclass(frozen=True)
 class DockerCommandBuilder:
@@ -391,14 +327,29 @@ class DockerCommandBuilder:
     def resolveImage(self) -> str:
         return resolveDockerExecutionImage(self.config)
 
-    def build(self, forwardedArgs: Sequence[str]) -> list[str]:
+    def build(
+        self,
+        forwardedArgs: Sequence[str],
+        *,
+        imageReference: str | None = None,
+    ) -> list[str]:
         runner = self.resolveRunner()
-        imageReference = self.resolveImage()
+        resolvedImageReference = imageReference or self.resolveImage()
 
         command: list[str] = [runner, "run", "--rm"]
 
         if self.config.dockerFlags:
             command.extend(self.config.dockerFlags)
+
+        if self.appName == DASHBOARD_APP_NAME and not dockerFlagsContainNetwork(
+            self.config.dockerFlags
+        ):
+            command.extend(["--network", "host"])
+
+        if not dockerFlagsContainUser(self.config.dockerFlags):
+            userValue = buildDockerUserValue()
+            if userValue is not None:
+                command.extend(["--user", userValue])
 
         for bindSpec in self.config.binds:
             command.extend(["--volume", bindSpec])
@@ -409,11 +360,34 @@ class DockerCommandBuilder:
         for key, value in self.config.env.items():
             command.extend(["--env", f"{key}={value}"])
 
-        command.append(imageReference)
+        command.append(resolvedImageReference)
         command.append(self.appName)
         command.extend(forwardedArgs)
 
         return command
+
+
+def dockerFlagsContainUser(dockerFlags: Sequence[str]) -> bool:
+    return any(
+        flag == "--user" or flag.startswith("--user=")
+        for flag in dockerFlags
+    )
+
+
+def dockerFlagsContainNetwork(dockerFlags: Sequence[str]) -> bool:
+    return any(
+        flag in {"--network", "--net"}
+        or flag.startswith("--network=")
+        or flag.startswith("--net=")
+        for flag in dockerFlags
+    )
+
+
+def buildDockerUserValue() -> str | None:
+    if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
+        return None
+
+    return f"{os.getuid()}:{os.getgid()}"
 
 
 @dataclass(frozen=True)
@@ -433,10 +407,28 @@ class KubAppRunner:
 
         if runtimeResolution.runtime == "apptainer":
             builder = ApptainerCommandBuilder(appName=appName, config=self.config)
+            command = builder.build(forwardedArgs)
+            if not dryRun:
+                try:
+                    if shouldUseApptainerExecForLocalImage(
+                        runnerPath=runtimeResolution.runnerPath,
+                        imageReference=runtimeResolution.imageReference,
+                        appName=appName,
+                    ):
+                        command = builder.buildExec(forwardedArgs)
+                        if self.config.verbose:
+                            LOGGER.debug(
+                                "Apptainer app '%s' not found in local image; using exec fallback.",
+                                appName,
+                            )
+                except KeyboardInterrupt:
+                    return 130
         else:
             builder = DockerCommandBuilder(appName=appName, config=self.config)
-
-        command = builder.build(forwardedArgs)
+            command = builder.build(
+                forwardedArgs,
+                imageReference=runtimeResolution.imageReference,
+            )
 
         if self.config.verbose:
             LOGGER.debug(
@@ -452,6 +444,7 @@ class KubAppRunner:
         executionEnv = dict(os.environ)
         if runtimeResolution.runtime == "apptainer":
             executionEnv.update(self.config.env)
+            injectApptainerContainerEnv(executionEnv, self.config.env)
 
         try:
             completed = subprocess.run(command, check=False, env=executionEnv)
@@ -461,3 +454,78 @@ class KubAppRunner:
             raise KubCliError(f"Unable to execute runtime command: {error}") from error
 
         return completed.returncode
+
+
+def injectApptainerContainerEnv(
+    executionEnv: dict[str, str],
+    containerEnv: Sequence[tuple[str, str]] | Mapping[str, str],
+) -> None:
+    """Propagate explicit container env through Apptainer runtime variables."""
+
+    if isinstance(containerEnv, Mapping):
+        entries = containerEnv.items()
+    else:
+        entries = containerEnv
+
+    disallowedKeys = {"HOME"}
+
+    for key, value in entries:
+        if key in disallowedKeys:
+            continue
+        executionEnv[f"APPTAINERENV_{key}"] = value
+        executionEnv[f"SINGULARITYENV_{key}"] = value
+
+
+def shouldUseApptainerExecForLocalImage(
+    *,
+    runnerPath: str,
+    imageReference: str,
+    appName: str,
+) -> bool:
+    if "://" in imageReference:
+        return False
+
+    imagePath = Path(imageReference).expanduser()
+    if not imagePath.exists() or imagePath.is_dir():
+        return False
+
+    apps = inspectApptainerApps(
+        runnerPath=runnerPath,
+        imagePath=imagePath,
+    )
+    if apps is None:
+        return False
+
+    return appName not in apps
+
+
+def inspectApptainerApps(
+    *,
+    runnerPath: str,
+    imagePath: Path,
+) -> set[str] | None:
+    inspectCommand = [
+        runnerPath,
+        "inspect",
+        "--list-apps",
+        str(imagePath),
+    ]
+
+    try:
+        completed = subprocess.run(
+            inspectCommand,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, TypeError):
+        return None
+
+    if completed.returncode != 0:
+        return None
+
+    return {
+        line.strip()
+        for line in completed.stdout.splitlines()
+        if line.strip()
+    }

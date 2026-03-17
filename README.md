@@ -108,17 +108,46 @@ Available on all three wrapper commands:
 - `--apptainer-flag FLAG` (repeatable)
 - `--docker-flag FLAG` (repeatable)
 - `--env KEY=VALUE` (repeatable)
+- `--cemdb-root PATH` (host path mounted to `/cemdb`; default current directory)
 - `--dry-run`
 - `--verbose / --no-verbose`
 - `--show-config`
 - `--version`
 
 Wrapper options must be placed before the forwarded in-container command arguments.
+By default, `kub-cli` mounts the current working directory to `/cemdb`.
+If `--cemdb-root PATH` is provided and `PATH` does not exist, kub-cli creates it.
+kub-cli also creates `PATH/.kub` and sets `HOME=/cemdb` plus
+`KUB_CONFIG=/cemdb/.kub/config.toml` by default so dataset config files are writable in containers.
+By default, kub-cli also sets container working directory to `/cemdb` (override with `--pwd`).
+If an inner command argument includes `--cemdb-root <host-path>`, kub-cli rewrites it to
+`--cemdb-root /cemdb` and mounts the provided host path to `/cemdb`.
+For `kub-simulate`, kub-cli injects `--config /cemdb/.kub-simulate.toml` unless an explicit
+inner `--config` is already provided, so simulation profiles live in the mounted `/cemdb` context.
+When a local `cemdb/` directory exists, kub-cli mirrors this config to
+`cemdb/.kub-simulate.toml` for local visibility and portability.
+For `kub-simulate`, kub-cli prepares Slurm command support inside the containerized wrapper:
+- if host `sbatch`/`srun` are available, kub-cli bridges them into `/cemdb/.kub-cli/host-bin`
+  and prepends this path to container `PATH`
+- if host Slurm commands are unavailable, kub-cli injects lightweight no-op shims in
+  `/cemdb/.kub-cli/shims` for inner `--dry-run` and `preprocess` flows so local script
+  generation/preview still works without a Slurm installation
+- for `kub-simulate` Apptainer-oriented profiles (for example `--profile apptainer-slurm`),
+  kub-cli also exposes a host Apptainer executable path into the container when available.
+For Apptainer runtime, kub-cli forwards wrapper-managed env vars with
+`APPTAINERENV_*`/`SINGULARITYENV_*` to ensure in-container `PATH`/config overrides apply.
+For Docker runtime, kub-cli runs with host UID:GID by default to avoid bind-mount
+permission issues; override with explicit `--docker-flag --user ...` if needed.
+For `kub-dashboard` on Docker runtime, kub-cli enables host networking by default
+(`docker run --network host`) so dashboard ports are directly reachable on the host.
+Override with explicit `--docker-flag --network ...` if you need a different mode.
+For Apptainer runtime, kub-cli uses standard host networking behavior.
 
 Use `--` to force all remaining arguments to be forwarded:
 
 ```bash
 kub-simulate --runtime docker -- --help
+kub-dataset --cemdb-root ./cemdb -- pull-simulator --version 0.2.0 --force
 ```
 
 ## Image model
@@ -140,7 +169,14 @@ oras://ghcr.io/feelpp/ktirio-urban-building:master-sif
 Default image references used when no explicit image is configured:
 
 - Docker: `ghcr.io/feelpp/ktirio-urban-building:master`
-- Apptainer: `oras://ghcr.io/feelpp/ktirio-urban-building:master-sif`
+- Apptainer remote source: `oras://ghcr.io/feelpp/ktirio-urban-building:master-sif`
+
+For wrapper execution with Apptainer runtime, kub-cli first checks for a local
+`./kub-master.sif` in the current directory. If present, it is used.
+For backward compatibility, `./ktirio-urban-building-master.sif` is also recognized.
+Otherwise kub-cli runs from the ORAS reference above.
+When a local Apptainer image does not define `--app kub-dataset|kub-simulate|kub-dashboard`,
+kub-cli automatically falls back to `apptainer exec <image> <app> ...`.
 
 Other tags are supported (for example `pr-<nnn>`), e.g.:
 
@@ -163,6 +199,14 @@ Subcommands:
 - `kub-img apps` (Apptainer runtime)
 - `kub-img path`
 
+Default behavior:
+
+- `kub-img pull --runtime apptainer` derives source as
+  `oras://ghcr.io/feelpp/ktirio-urban-building:master-sif`
+- If no local Apptainer destination is configured, kub-cli uses
+  `./kub-master.sif` in the current directory
+- `--runtime auto` prefers Apptainer when available in `PATH`, then Docker
+
 Examples:
 
 ```bash
@@ -173,6 +217,9 @@ kub-img pull --runtime docker --image ghcr.io/feelpp/ktirio-urban-building:maste
 kub-img pull oras://ghcr.io/feelpp/ktirio-urban-building:master-sif \
   --runtime apptainer \
   --image ./ktirio-urban-building.sif
+
+# Apptainer pull with defaults (source and local destination auto-resolved)
+kub-img pull --runtime apptainer
 
 # Runtime-aware image info
 kub-img info --runtime docker --image ghcr.io/feelpp/ktirio-urban-building:master --json
@@ -189,11 +236,17 @@ Precedence (highest to lowest):
 4. User config: `~/.config/kub-cli/config.toml`
 5. Built-in defaults
 
+Precedence behavior details:
+
+- Scalar settings (`runtime`, `workdir`, `runner`, image values, `verbose`) are last-wins.
+- List settings (`bind`, `apptainer_flags`, `docker_flags`) are additive merged across layers
+  with de-duplication while preserving order.
+
 ### Environment variables
 
 - `KUB_RUNTIME` : `auto|apptainer|docker`
 - `KUB_IMAGE_DOCKER` : Docker image reference
-- `KUB_IMAGE_APPTAINER` : Apptainer image path (local SIF)
+- `KUB_IMAGE_APPTAINER` : Apptainer image path (local SIF); optional override for default local destination
 - `KUB_IMAGE` : legacy generic image fallback (backward compatibility)
 - `KUB_BIND` : additional binds, comma- or semicolon-separated
 - `KUB_WORKDIR` : runtime working directory
@@ -251,6 +304,12 @@ uv venv .venv
 . .venv/bin/activate
 uv pip install -e '.[dev]'
 pytest
+```
+
+Smoke tests with fake container runners:
+
+```bash
+pytest -q tests/test_smoke_fake_runtimes.py
 ```
 
 Version bumping for maintainers:

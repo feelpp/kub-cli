@@ -82,6 +82,7 @@ def testDockerCommandBuilderConstructsExpectedCommand(
 
     assert command[:4] == ["/usr/bin/docker", "run", "--rm", "--pull"]
     assert "always" in command
+    assert "--user" in command
     assert "--volume" in command
     assert "/data:/data" in command
     assert "/scratch:/scratch" in command
@@ -98,6 +99,62 @@ def testDockerCommandBuilderConstructsExpectedCommand(
         "--mesh",
         "fine",
     ]
+
+
+def testDockerUserFlagIsNotInjectedWhenExplicitlyProvided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = KubConfig(
+        runtime="docker",
+        imageDocker="ghcr.io/feelpp/ktirio-urban-building:master",
+        dockerFlags=("--user", "1234:1234"),
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    builder = DockerCommandBuilder(appName="kub-dataset", config=config)
+    command = builder.build(["push", "./data"])
+
+    assert command.count("--user") == 1
+    userIndex = command.index("--user")
+    assert command[userIndex + 1] == "1234:1234"
+
+
+def testDockerDashboardDefaultsToHostNetwork(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = KubConfig(
+        runtime="docker",
+        imageDocker="ghcr.io/feelpp/ktirio-urban-building:master",
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    builder = DockerCommandBuilder(appName="kub-dashboard", config=config)
+    command = builder.build(["serve"])
+
+    assert "--network" in command
+    networkIndex = command.index("--network")
+    assert command[networkIndex + 1] == "host"
+
+
+def testDockerDashboardHonorsExplicitNetworkFlag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = KubConfig(
+        runtime="docker",
+        imageDocker="ghcr.io/feelpp/ktirio-urban-building:master",
+        dockerFlags=("--network", "bridge"),
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    builder = DockerCommandBuilder(appName="kub-dashboard", config=config)
+    command = builder.build(["serve"])
+
+    assert command.count("--network") == 1
+    networkIndex = command.index("--network")
+    assert command[networkIndex + 1] == "bridge"
 
 
 def testDeriveApptainerOrasReference() -> None:
@@ -152,7 +209,9 @@ def testAutoRuntimePrefersApptainerWhenAvailable(
 
 def testAutoRuntimeUsesDefaultMasterImages(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     config = KubConfig(runtime="auto")
 
     def fakeWhich(name: str) -> str | None:
@@ -168,6 +227,56 @@ def testAutoRuntimeUsesDefaultMasterImages(
 
     assert resolution.runtime == "apptainer"
     assert resolution.imageReference == "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif"
+
+
+def testAutoRuntimeUsesLocalMasterSifWhenPresent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    localImage = tmp_path / "kub-master.sif"
+    localImage.write_text("dummy", encoding="utf-8")
+
+    config = KubConfig(runtime="auto")
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "apptainer":
+            return "/usr/bin/apptainer"
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    resolution = resolveRuntimeForExecution(config)
+
+    assert resolution.runtime == "apptainer"
+    assert resolution.imageReference == str(localImage.resolve())
+
+
+def testAutoRuntimeSupportsLegacyLocalMasterSifName(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    legacyImage = tmp_path / "ktirio-urban-building-master.sif"
+    legacyImage.write_text("dummy", encoding="utf-8")
+
+    config = KubConfig(runtime="auto")
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "apptainer":
+            return "/usr/bin/apptainer"
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    resolution = resolveRuntimeForExecution(config)
+
+    assert resolution.runtime == "apptainer"
+    assert resolution.imageReference == str(legacyImage.resolve())
 
 
 def testAutoRuntimeFallsBackToDocker(
@@ -224,6 +333,42 @@ def testSelectedRuntimeMissingImageRaises(
         resolveRuntimeForExecution(config)
 
 
+def testSelectedDockerRuntimeRejectsInvalidExplicitImageOverride(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = KubConfig(
+        runtime="docker",
+        imageOverride="/tmp/custom.sif",
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    with pytest.raises(ImageNotFoundError, match="Invalid Docker image reference"):
+        resolveRuntimeForExecution(config)
+
+
+def testAutoRuntimeIgnoresLocalImageOverrideWhenFallingBackToDocker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = KubConfig(
+        runtime="auto",
+        imageOverride="/tmp/custom.sif",
+        imageDocker="ghcr.io/feelpp/ktirio-urban-building:master",
+    )
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    resolution = resolveRuntimeForExecution(config)
+
+    assert resolution.runtime == "docker"
+    assert resolution.imageReference == "ghcr.io/feelpp/ktirio-urban-building:master"
+
+
 def testAutoRuntimeFailureHasHelpfulMessage(monkeypatch: pytest.MonkeyPatch) -> None:
     config = KubConfig(runtime="auto")
 
@@ -258,6 +403,43 @@ def testDryRunSkipsSubprocessForDocker(
     assert called["value"] is False
 
 
+def testDryRunSkipsApptainerInspectProbe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    imagePath = tmp_path / "kub.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    config = KubConfig(
+        runtime="apptainer",
+        imageApptainer=str(imagePath),
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+
+    called = {"value": False}
+
+    def fakeRun(*args, **kwargs):  # type: ignore[no-untyped-def]
+        called["value"] = True
+        return subprocess.CompletedProcess(args=[], returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    runner = KubAppRunner(config=config)
+    exitCode = runner.run(
+        appName="kub-simulate",
+        forwardedArgs=["status", "arz"],
+        dryRun=True,
+    )
+
+    assert exitCode == 0
+    assert called["value"] is False
+    output = capsys.readouterr().out
+    assert "apptainer run" in output
+    assert "--app kub-simulate" in output
+
+
 def testSubprocessExitCodePropagationForApptainer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -268,14 +450,22 @@ def testSubprocessExitCodePropagationForApptainer(
     config = KubConfig(
         runtime="apptainer",
         imageApptainer=str(imagePath),
-        env={"WRAPPED_ENV": "ENABLED"},
+        env={"WRAPPED_ENV": "ENABLED", "HOME": "/cemdb"},
     )
 
     monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
 
     captured: dict[str, object] = {}
 
-    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+    def fakeRun(command, check=False, env=None, capture_output=False, text=False):  # type: ignore[no-untyped-def]
+        if len(command) >= 3 and command[1] == "inspect" and command[2] == "--list-apps":
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="kub-simulate\nkub-dataset\nkub-dashboard\n",
+                stderr="",
+            )
+
         captured["command"] = command
         captured["check"] = check
         captured["env"] = env
@@ -290,6 +480,56 @@ def testSubprocessExitCodePropagationForApptainer(
     assert captured["check"] is False
     assert isinstance(captured["env"], dict)
     assert captured["env"]["WRAPPED_ENV"] == "ENABLED"  # type: ignore[index]
+    assert captured["env"]["APPTAINERENV_WRAPPED_ENV"] == "ENABLED"  # type: ignore[index]
+    assert captured["env"]["SINGULARITYENV_WRAPPED_ENV"] == "ENABLED"  # type: ignore[index]
+    assert captured["env"]["HOME"] == "/cemdb"  # type: ignore[index]
+    assert "APPTAINERENV_HOME" not in captured["env"]  # type: ignore[operator]
+    assert "SINGULARITYENV_HOME" not in captured["env"]  # type: ignore[operator]
+
+
+def testApptainerPathEnvIsForwardedWithRuntimePrefixes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    imagePath = tmp_path / "kub.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    config = KubConfig(
+        runtime="apptainer",
+        imageApptainer=str(imagePath),
+        env={"PATH": "/cemdb/.kub-cli/shims:/usr/bin:/bin"},
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check=False, env=None, capture_output=False, text=False):  # type: ignore[no-untyped-def]
+        if len(command) >= 3 and command[1] == "inspect" and command[2] == "--list-apps":
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="kub-simulate\nkub-dataset\nkub-dashboard\n",
+                stderr="",
+            )
+
+        captured["env"] = env
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    runner = KubAppRunner(config=config)
+    exitCode = runner.run(appName="kub-simulate", forwardedArgs=["status", "arz"])
+
+    assert exitCode == 0
+    assert isinstance(captured["env"], dict)
+    assert captured["env"]["PATH"] == "/cemdb/.kub-cli/shims:/usr/bin:/bin"  # type: ignore[index]
+    assert (  # type: ignore[index]
+        captured["env"]["APPTAINERENV_PATH"] == "/cemdb/.kub-cli/shims:/usr/bin:/bin"
+    )
+    assert (  # type: ignore[index]
+        captured["env"]["SINGULARITYENV_PATH"] == "/cemdb/.kub-cli/shims:/usr/bin:/bin"
+    )
 
 
 def testKeyboardInterruptReturns130(
@@ -315,3 +555,41 @@ def testKeyboardInterruptReturns130(
     exitCode = runner.run(appName="kub-dashboard", forwardedArgs=["serve", "./results"])
 
     assert exitCode == 130
+
+
+def testApptainerExecFallbackIsUsedWhenAppIsMissing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    imagePath = tmp_path / "kub.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    config = KubConfig(
+        runtime="apptainer",
+        imageApptainer=str(imagePath),
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+
+    calls: list[list[str]] = []
+
+    def fakeRun(command, check=False, env=None, capture_output=False, text=False):  # type: ignore[no-untyped-def]
+        calls.append(list(command))
+        if len(command) >= 3 and command[1] == "inspect" and command[2] == "--list-apps":
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="other-app\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    runner = KubAppRunner(config=config)
+    exitCode = runner.run(appName="kub-dataset", forwardedArgs=["pull", "kernante"])
+
+    assert exitCode == 0
+    assert len(calls) == 2
+    assert calls[1][:2] == ["/usr/bin/apptainer", "exec"]
+    assert calls[1][2:] == [str(imagePath), "kub-dataset", "pull", "kernante"]

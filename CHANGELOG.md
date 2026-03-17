@@ -15,6 +15,10 @@ SPDX-License-Identifier: Apache-2.0
 - Restricted publish workflow to official `feelpp/kub-cli` repository and documented PyPI organization target `feelpp`
 - Fixed wrapper argument forwarding so app flags like `--version` after the first inner command token are passed to in-container apps
 - Updated `kub-cli bump` to automatically rotate `CHANGELOG.md` (`Unreleased` -> released section with date)
+- Added automatic `/cemdb` bind handling for wrapped apps: current directory is mounted by default and `--cemdb-root` is forwarded as `/cemdb`
+- Improved Docker bind usability: default Docker execution now uses host UID:GID, and missing `--cemdb-root` directories are auto-created
+- Added writable dataset-config defaults in containers: `HOME=/cemdb`, `KUB_CONFIG=/cemdb/.kub/config.toml`, and auto-creation of `.kub` under cemdb root
+- Default container workdir is now `/cemdb` (unless `--pwd` is set), preventing writes to unwritable image home directories
 
 ## 0.1.0 - 2026-03-14
 

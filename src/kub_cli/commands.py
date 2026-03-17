@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .app_policy import getAppPolicy
 from .config import KubConfig, KubConfigOverrides, loadKubConfig
 from .errors import ConfigError
 from .img_integration import (
@@ -21,6 +22,7 @@ from .img_integration import (
 )
 from .logging_utils import configureLogging
 from .runtime import KubAppRunner
+from .wrapper_context import prepareCemdbContext, syncSimulateConfigProjection
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class WrapperOptions:
     apptainerFlags: tuple[str, ...] = ()
     dockerFlags: tuple[str, ...] = ()
     envVars: tuple[str, ...] = ()
+    cemdbRoot: str | None = None
     showConfig: bool = False
 
 
@@ -51,8 +54,37 @@ def runWrapperCommand(
 ) -> int:
     """Resolve config and execute one wrapped in-container app."""
 
-    effectiveConfig = resolveEffectiveConfig(
+    initialConfig = resolveEffectiveConfig(
         options=options,
+        cwd=cwd,
+        env=env,
+        userConfigPath=userConfigPath,
+    )
+    configureLogging(initialConfig.verbose)
+
+    if options.showConfig:
+        print(json.dumps(initialConfig.toDict(), indent=2, sort_keys=True))
+        return 0
+
+    policy = getAppPolicy(appName)
+    hasExplicitPolicyConfig = policy.hasExplicitWrapperConfig(forwardedArgs)
+
+    preparedOptions, preparedForwardedArgs, hostCemdbRoot = prepareCemdbContext(
+        options=options,
+        policy=policy,
+        forwardedArgs=forwardedArgs,
+        cwd=cwd,
+        configHint=initialConfig,
+    )
+
+    if policy.shouldSyncConfigProjection() and not hasExplicitPolicyConfig:
+        syncSimulateConfigProjection(
+            hostCemdbRoot=Path(hostCemdbRoot),
+            mirrorToNested=False,
+        )
+
+    effectiveConfig = resolveEffectiveConfig(
+        options=preparedOptions,
         cwd=cwd,
         env=env,
         userConfigPath=userConfigPath,
@@ -60,13 +92,20 @@ def runWrapperCommand(
 
     configureLogging(effectiveConfig.verbose)
 
-    if options.showConfig:
-        print(json.dumps(effectiveConfig.toDict(), indent=2, sort_keys=True))
-        if not forwardedArgs and not options.dryRun:
-            return 0
-
     runner = KubAppRunner(config=effectiveConfig)
-    return runner.run(appName=appName, forwardedArgs=forwardedArgs, dryRun=options.dryRun)
+    exitCode = runner.run(
+        appName=appName,
+        forwardedArgs=preparedForwardedArgs,
+        dryRun=options.dryRun,
+    )
+
+    if policy.shouldSyncConfigProjection() and not hasExplicitPolicyConfig:
+        syncSimulateConfigProjection(
+            hostCemdbRoot=Path(hostCemdbRoot),
+            mirrorToNested=True,
+        )
+
+    return exitCode
 
 
 def pullSelectedRuntimeImage(

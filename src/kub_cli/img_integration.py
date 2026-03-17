@@ -17,10 +17,13 @@ from typing import Any, Literal
 
 from .config import KubConfig, SUPPORTED_RUNTIMES
 from .errors import KubCliError, RuntimeSelectionError
+from .image_resolution import (
+    deriveApptainerOrasReference,
+    resolveApptainerLocalImageReference,
+    resolveDockerUpstreamReference,
+)
 from .logging_utils import LOGGER, formatCommand
 from .runtime import (
-    deriveApptainerOrasReference,
-    getRuntimeCandidateImage,
     getRunnerValue,
     tryResolveRunnerExecutable,
 )
@@ -166,21 +169,18 @@ def resolveImageRuntime(config: KubConfig) -> ImageRuntime:
     apptainerRunnerValue = getRunnerValue(config, "apptainer")
     apptainerRunner = tryResolveRunnerExecutable(apptainerRunnerValue)
     if apptainerRunner is not None:
-        try:
-            resolveApptainerLocalImageReference(config)
-            return "apptainer"
-        except KubCliError:
-            pass
+        return "apptainer"
 
     dockerRunnerValue = getRunnerValue(config, "docker")
     dockerRunner = tryResolveRunnerExecutable(dockerRunnerValue)
-    dockerImage = getRuntimeCandidateImage(config, "docker")
-    if dockerRunner is not None and dockerImage is not None:
+    if dockerRunner is not None:
         return "docker"
 
     raise RuntimeSelectionError(
         "Unable to resolve runtime in auto mode for image operations. "
-        "Neither Apptainer nor Docker runner is available."
+        "Neither Apptainer nor Docker runner is available. "
+        "Install Apptainer (https://apptainer.org/docs/admin/main/installation.html) "
+        "or Docker Engine (https://docs.docker.com/engine/install/)."
     )
 
 
@@ -188,12 +188,7 @@ def buildKubImgInfoRequest(config: KubConfig) -> KubImgInfoRequest:
     runtime = resolveImageRuntime(config)
 
     if runtime == "docker":
-        dockerImage = getRuntimeCandidateImage(config, "docker")
-        if dockerImage is None:
-            raise KubCliError(
-                "No Docker image configured for image info. "
-                "Set --image, KUB_IMAGE_DOCKER, or KUB_IMAGE."
-            )
+        dockerImage = resolveDockerUpstreamReference(config)
         return KubImgInfoRequest(runtime="docker", image=dockerImage)
 
     apptainerImage = resolveApptainerLocalImageReference(config)
@@ -204,12 +199,7 @@ def buildKubImgPullRequest(config: KubConfig) -> KubImgPullRequest:
     runtime = resolveImageRuntime(config)
 
     if runtime == "docker":
-        dockerImage = getRuntimeCandidateImage(config, "docker")
-        if dockerImage is None:
-            raise KubCliError(
-                "No Docker image configured for pull. "
-                "Set --image, KUB_IMAGE_DOCKER, or KUB_IMAGE."
-            )
+        dockerImage = resolveDockerUpstreamReference(config)
 
         return KubImgPullRequest(
             runtime="docker",
@@ -223,12 +213,11 @@ def buildKubImgPullRequest(config: KubConfig) -> KubImgPullRequest:
     if explicitApptainerReference is not None and explicitApptainerReference.startswith("oras://"):
         source = explicitApptainerReference
     else:
-        dockerImage = getRuntimeCandidateImage(config, "docker")
-        if dockerImage is None:
-            raise KubCliError(
-                "Unable to derive Apptainer ORAS source: no Docker image is configured. "
-                "Set KUB_IMAGE_DOCKER (or runtime image config)."
-            )
+        dockerImage = resolveDockerUpstreamReference(
+            config,
+            includeImageOverride=False,
+            strictLegacyImage=False,
+        )
         source = deriveApptainerOrasReference(dockerImage)
 
     if source.startswith("docker://"):
@@ -240,26 +229,4 @@ def buildKubImgPullRequest(config: KubConfig) -> KubImgPullRequest:
         runtime="apptainer",
         image=destinationImage,
         source=source,
-    )
-
-
-def resolveApptainerLocalImageReference(config: KubConfig) -> str:
-    candidates = [config.imageOverride, config.imageApptainer, config.image]
-
-    for candidate in candidates:
-        if candidate is None:
-            continue
-
-        normalized = candidate.strip()
-        if not normalized:
-            continue
-
-        if "://" in normalized:
-            continue
-
-        return normalized
-
-    raise KubCliError(
-        "No local Apptainer image path configured. "
-        "Set --image or KUB_IMAGE_APPTAINER to a .sif file path."
     )
