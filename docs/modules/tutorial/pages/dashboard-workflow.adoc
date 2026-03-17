@@ -1,0 +1,76 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
+= Dashboard Workflow
+:description: Build run index and explore simulation outputs with kub-dashboard
+:page-tags: tutorial, dashboard, kub-dashboard
+:sectanchors:
+:sectnums:
+
+include::partial$sample-vars.adoc[]
+
+[.lead]
+After runs are available, use `kub-dashboard` to index and browse results from the CEMDB tree.
+
+include::partial$cemdb-root-defaults.adoc[]
+
+== 1. Build or Refresh Index
+
+[source,bash,subs=attributes+]
+----
+kub-dashboard index --cemdb-root {tutorial_cemdb_root} --refresh
+----
+
+For debugging output:
+
+[source,bash,subs=attributes+]
+----
+kub-dashboard print-index --cemdb-root {tutorial_cemdb_root}
+----
+
+== 2. Start Dashboard UI
+
+[source,bash,subs=attributes+]
+----
+kub-dashboard serve --cemdb-root {tutorial_cemdb_root} --host 127.0.0.1 --port 8050
+----
+
+Open: http://127.0.0.1:8050
+
+== 3. Optional API-Only Mode
+
+[source,bash,subs=attributes+]
+----
+kub-dashboard api --cemdb-root {tutorial_cemdb_root} --host 127.0.0.1 --port 8050
+----
+
+== 4. Explore Core Pages
+
+[cols="1,3",options="header"]
+|===
+|Page |What to check
+
+|Run Catalog
+|Run IDs, location names, run type, status
+
+|Run Detail
+|Summary, artifacts, plots, map, samples (ensemble)
+
+|Locations
+|Inventory, weather availability, preprocessing assets
+
+|Location Detail
+|Building distributions, weather analysis, map
+
+|===
+
+[TIP]
+====
+If the UI starts but shows no runs, rebuild the index with `--refresh` and verify manifests exist under `simulations/single/run_*/manifest.json`.
+====
+
+== Next Step
+
+Proceed to xref:validation-and-troubleshooting.adoc[Validation and Troubleshooting].

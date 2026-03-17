@@ -1,0 +1,18 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
+[NOTE]
+====
+`--cemdb-root` can be omitted in many cases:
+
+- If the current directory contains `./cemdb`, `kub-dataset` and `kub-simulate` use the default `cemdb/locations`.
+- `kub-dashboard` auto-detects `./cemdb`.
+
+`CEMDB_ROOT` environment variable:
+
+- `kub-dashboard` uses `CEMDB_ROOT` as its default CEMDB path.
+- For wrapper commands, pass the CEMDB root (for example `cemdb`) to `--cemdb-root`, not `cemdb/locations`.
+- Keep `cemdb/locations` for dataset path references (for example manifest or layout paths).
+====

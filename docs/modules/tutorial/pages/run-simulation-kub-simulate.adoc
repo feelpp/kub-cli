@@ -1,0 +1,183 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
+= Run Simulation
+:description: Submit preprocessing and simulation jobs using kub-simulate
+:page-tags: tutorial, simulation, kub-simulate
+:sectanchors:
+:sectnums:
+
+include::partial$sample-vars.adoc[]
+
+[.lead]
+Use `kub-simulate` for end-user runs. It supports Slurm or local launcher execution and provides status inspection commands.
+This tutorial uses `--runtime apptainer` for both launchers. Keep runtime and image settings in `kub-cli` config (or environment) to avoid repeating them.
+
+include::partial$cemdb-root-defaults.adoc[]
+
+[IMPORTANT]
+====
+Default launcher mode is `auto`:
+
+* if Slurm tools are available, `kub-simulate` submits with Slurm
+* otherwise it falls back to local command-line execution
+====
+
+== 0. Configure `kub-simulate` Profiles (Recommended)
+
+Use `kub-simulate config` to store user defaults and avoid repeating long command lines.
+
+[IMPORTANT]
+====
+Do not store dataset version in config.
+Keep `--version` explicit on each command because it belongs to the selected dataset you are running.
+====
+
+[source,bash,subs=attributes+]
+----
+# Create .kub-simulate.toml in the current directory
+kub-simulate config init
+
+# Shared default for preprocess/run
+kub-simulate --runtime apptainer config set cemdb_root {tutorial_cemdb_locations}
+
+# Apptainer Slurm profile
+kub-simulate --runtime apptainer config set launcher slurm --profile-target apptainer-slurm
+kub-simulate --runtime apptainer config set partition {tutorial_partition} --profile-target apptainer-slurm
+kub-simulate --runtime apptainer config set runtime apptainer --profile-target apptainer-slurm
+
+# Apptainer local profile
+kub-simulate --runtime apptainer config set launcher local --profile-target apptainer-local
+kub-simulate --runtime apptainer config set runtime apptainer --profile-target apptainer-local
+
+# Review resulting file
+kub-simulate config show
+----
+
+[NOTE]
+====
+Profiles are applied to `kub-simulate preprocess` and `kub-simulate run`.
+Use `--runtime` (or `KUB_RUNTIME`) and `--image` (or `KUB_IMAGE_APPTAINER`) to point kub-cli at the executable image.
+====
+
+== Why Run `preprocess` First
+
+`kub-simulate preprocess` prepares partitioned preprocessing assets (mesh/data splits)
+for specific MPI sizes before simulation submission.
+
+In practice, it helps you:
+
+* generate the partition layouts your runs will use (for example `32`, `64`, `{tutorial_np}`)
+* avoid spending simulation job time on partition preparation
+* keep runs reproducible by reusing the same prepared partitions
+
+By default, preprocessing is incremental: existing partitions are reused.
+Use `--force` only when you need a full rebuild of preprocessing assets.
+
+== 1. Preview Preprocessing Submission
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer preprocess {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-slurm \
+  --partitions 32 64 {tutorial_np} \
+  --dry-run
+----
+
+[tabs]
+====
+Dry Run Recommended First::
++
+--
+Use `--dry-run` to print the generated Slurm script and verify paths, partition, and arguments before submitting.
+--
+
+Direct Submit::
++
+--
+Drop `--dry-run` once the generated script looks correct for your queue and policy constraints.
+--
+====
+
+== 2. Submit Preprocessing Job
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer preprocess {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-slurm \
+  --partitions 32 64 {tutorial_np}
+----
+
+Optional full rebuild of preprocessing assets:
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer preprocess {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-slurm \
+  --force
+----
+
+== 3. Submit Simulation Job
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer run {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-slurm \
+  --np {tutorial_np}
+----
+
+Optional runtime override example:
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer run {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-slurm \
+  --np {tutorial_np} \
+  --time-stop 172800
+----
+
+Local launcher alternative:
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer run {tutorial_location} \
+  --version {tutorial_version} \
+  --profile apptainer-local \
+  --np {tutorial_np}
+----
+
+== 4. Inspect Status
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer --cemdb-root {tutorial_cemdb_root} status {tutorial_location} \
+  --version {tutorial_version} \
+  --last 10
+----
+
+Inspect a single run in detail:
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer --cemdb-root {tutorial_cemdb_root} status {tutorial_location} \
+  --version {tutorial_version} \
+  --run-id run_YYYY-MM-DD_HH-MM-SS
+----
+
+== 5. Confirm Run Artifacts Exist
+
+[source,bash,subs=attributes+]
+----
+find {tutorial_cemdb_locations}/{tutorial_location}/v{tutorial_version}/simulations/single -maxdepth 2 -name manifest.json | sort
+----
+
+== Next Step
+
+Proceed to xref:apptainer-runtime-workflow.adoc[Apptainer Runtime Workflow].

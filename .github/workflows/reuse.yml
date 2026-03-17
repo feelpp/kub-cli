@@ -7,10 +7,24 @@ name: REUSE Compliance Check
 
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+      - "antora-playbook.yml"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/docs.yml"
   push:
     branches:
       - main
       - master
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+      - "antora-playbook.yml"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/docs.yml"
 
 jobs:
   reuse:

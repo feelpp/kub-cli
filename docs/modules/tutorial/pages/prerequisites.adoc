@@ -1,0 +1,141 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
+= Prerequisites
+:description: Runtime and environment checks before running the KUB tutorial
+:page-tags: tutorial, prerequisites
+:sectanchors:
+:sectnums:
+
+include::partial$sample-vars.adoc[]
+
+[.lead]
+Run these checks before starting dataset or simulation steps.
+This tutorial uses the `kub-cli` wrapper commands and `kub-img` for container image management.
+
+== Install `kub-cli`
+
+Use `uv pip` (recommended) or install from source:
+
+[source,bash]
+----
+uv pip install kub-cli
+
+# Install from source (development):
+uv pip install .
+# editable development install:
+uv pip install -e .[dev]
+----
+
+You should then have:
+
+- `kub-dataset`
+- `kub-simulate`
+- `kub-dashboard`
+- `kub-img`
+
+== Required Runtime
+
+`kub-cli` supports one of:
+
+- Apptainer (`apptainer` command available on `PATH`)
+- Docker (`docker` command available on `PATH`)
+
+Choose one, install what matches your environment:
+
+- https://apptainer.org/docs/admin/main/installation.html[Install Apptainer]
+- https://docs.docker.com/engine/install/[Install Docker]
+
+Optional Slurm support (for `kub-simulate --launcher slurm`):
+
+- `sbatch`
+- `srun`
+
+Optional local MPI execution (`--launcher local`, `--np > 1`):
+
+- `mpiexec` or `mpirun`
+
+== Installation and Wrapper Defaults
+
+Set wrapper defaults for a session (recommended):
+
+[source,bash,subs=attributes+]
+----
+export KUB_RUNTIME=apptainer
+export KUB_IMAGE_DOCKER={tutorial_kub_docker_image}
+export KUB_IMAGE_APPTAINER=./kub-master.sif
+export CEMDB_ROOT={tutorial_cemdb_root}
+----
+
+== Pull and Validate the Runtime Image
+
+Use `kub-img` before running simulation commands:
+
+[source,bash,subs=attributes+]
+----
+kub-img pull --runtime apptainer --image ./kub-master.sif {tutorial_kub_apptainer_image_ref}
+kub-img path --runtime apptainer --image ./kub-master.sif
+kub-img info --runtime apptainer --image ./kub-master.sif --json
+----
+
+== Quick Environment Check
+
+include::partial$env-checks.adoc[]
+
+== Optional Environment Variables
+
+[source,bash,subs=attributes+]
+----
+# Optional for local Docker sessions:
+# export KUB_RUNTIME=docker
+
+# Optional dashboard host/port defaults:
+# export DASHBOARD_HOST=127.0.0.1
+# export DASHBOARD_PORT=8050
+----
+
+== Execution Context
+
+[tabs]
+====
+HPC Login Node::
++
+--
+Use this when you plan to submit jobs with Slurm.
+
+[source,bash]
+----
+which sbatch
+which squeue
+kub-simulate --help
+kub-img --help
+kub-dataset --help
+kub-dashboard --help
+----
+--
+
+Local Machine::
++
+--
+Use this for local runs, with either `apptainer` or `docker`.
+
+[source,bash,subs=attributes+]
+----
+which mpiexec || which mpirun
+kub-simulate --runtime apptainer --help
+kub-dataset --help
+kub-dashboard --help
+kub-img --help
+----
+--
+====
+
+== CEMDB Root Defaults
+
+include::partial$cemdb-root-defaults.adoc[]
+
+== Next Step
+
+Proceed to xref:dataset-workflow.adoc[Dataset Workflow].

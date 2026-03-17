@@ -33,3 +33,5 @@ htmlcov/
 # OS files
 .DS_Store
 cemdb/
+node_modules/
+public/

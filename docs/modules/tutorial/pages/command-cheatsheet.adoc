@@ -1,0 +1,92 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
+= Command Cheatsheet
+:description: Copy-paste command reference for the KUB CLI tutorial workflow
+:page-tags: tutorial, cheatsheet, cli
+:sectanchors:
+:sectnums:
+
+include::partial$sample-vars.adoc[]
+
+[.lead]
+Compact command list for the full path: dataset -> simulation (`kub-simulate`) -> dashboard.
+
+include::partial$cemdb-root-defaults.adoc[]
+
+== Dataset
+
+[source,bash,subs=attributes+]
+----
+kub-dataset list-dmps
+kub-dataset list-locations --show-versions
+kub-dataset --cemdb-root {tutorial_cemdb_root} pull {tutorial_location} --version {tutorial_version} --dmp girder-unistra --api-key "$GIRDER_API_KEY"
+kub-dataset --cemdb-root {tutorial_cemdb_root} pull-simulator --version {tutorial_simulator_version} --force
+kub-dataset --cemdb-root {tutorial_cemdb_root} summary {tutorial_location}
+----
+
+== Wrapper Helpers (kub-img and kub-simulate)
+
+[source,bash,subs=attributes+]
+----
+kub-img pull --runtime apptainer --image ./kub-master.sif {tutorial_kub_apptainer_image_ref}
+kub-img info --runtime apptainer --image ./kub-master.sif --json
+kub-img path --runtime apptainer --image ./kub-master.sif
+----
+
+== Simulation Config (kub-simulate)
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer config init
+kub-simulate --runtime apptainer config set cemdb_root {tutorial_cemdb_locations}
+kub-simulate --runtime apptainer config set launcher slurm --profile-target apptainer-slurm
+kub-simulate --runtime apptainer config set partition {tutorial_partition} --profile-target apptainer-slurm
+kub-simulate --runtime apptainer config set runtime apptainer --profile-target apptainer-slurm
+kub-simulate --runtime apptainer config set launcher local --profile-target apptainer-local
+kub-simulate --runtime apptainer config set runtime apptainer --profile-target apptainer-local
+kub-simulate config show
+----
+
+== Simulation (kub-simulate, Apptainer)
+
+[source,bash,subs=attributes+]
+----
+kub-simulate --runtime apptainer --image ./kub-master.sif preprocess {tutorial_location} \
+  --version {tutorial_version} --profile apptainer-slurm --partitions 32 64 {tutorial_np}
+kub-simulate --runtime apptainer --image ./kub-master.sif preprocess {tutorial_location} \
+  --version {tutorial_version} --profile apptainer-local --partitions 32 64 {tutorial_np}
+kub-simulate --runtime apptainer --image ./kub-master.sif run {tutorial_location} \
+  --version {tutorial_version} --profile apptainer-slurm --np {tutorial_np}
+kub-simulate --runtime apptainer --image ./kub-master.sif run {tutorial_location} \
+  --version {tutorial_version} --profile apptainer-local --np {tutorial_np}
+kub-simulate --runtime apptainer --image ./kub-master.sif --cemdb-root {tutorial_cemdb_root} status {tutorial_location} \
+  --version {tutorial_version} \
+  --last 10
+----
+
+== Validation
+
+[source,bash,subs=attributes+]
+----
+kub-dataset manifest-validate --strict {tutorial_cemdb_locations}/{tutorial_location}/v{tutorial_version}/simulations/single/run_YYYY-MM-DD_HH-MM-SS/manifest.json
+----
+
+== Dashboard
+
+[source,bash,subs=attributes+]
+----
+kub-dashboard index --cemdb-root {tutorial_cemdb_root} --refresh
+kub-dashboard serve --cemdb-root {tutorial_cemdb_root} --host 127.0.0.1 --port 8050
+----
+
+== Useful Links
+
+- xref:index.adoc[Tutorial landing page]
+- xref:dataset-workflow.adoc[Dataset workflow]
+- xref:run-simulation-kub-simulate.adoc[Simulation workflow]
+- xref:apptainer-runtime-workflow.adoc[Apptainer runtime workflow]
+- xref:dashboard-workflow.adoc[Dashboard workflow]
+- xref:validation-and-troubleshooting.adoc[Validation and troubleshooting]

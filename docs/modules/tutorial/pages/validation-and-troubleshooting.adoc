@@ -1,0 +1,77 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
+= Validation and Troubleshooting
+:description: Validate manifests and diagnose common issues in dataset, simulation, and dashboard workflows
+:page-tags: tutorial, validation, troubleshooting
+:sectanchors:
+:sectnums:
+
+include::partial$sample-vars.adoc[]
+
+[.lead]
+Use this page to verify output integrity and quickly diagnose common workflow problems.
+
+include::partial$cemdb-root-defaults.adoc[]
+
+== 1. Validate Run Manifest
+
+[source,bash,subs=attributes+]
+----
+# Pick one generated run manifest
+kub-dataset manifest-validate {tutorial_cemdb_locations}/{tutorial_location}/v{tutorial_version}/simulations/single/run_YYYY-MM-DD_HH-MM-SS/manifest.json
+
+# Strict mode
+kub-dataset manifest-validate --strict {tutorial_cemdb_locations}/{tutorial_location}/v{tutorial_version}/simulations/single/run_YYYY-MM-DD_HH-MM-SS/manifest.json
+----
+
+== 2. Verify Dataset and Version Resolution
+
+[source,bash,subs=attributes+]
+----
+kub-dataset --cemdb-root {tutorial_cemdb_root} summary {tutorial_location} --version {tutorial_version}
+----
+
+== 3. Common Issues
+
+[cols="1,2,2",options="header"]
+|===
+|Symptom |Likely cause |Check/fix
+
+|`kub-simulate` fails before submit
+|Wrapper runtime/image is not resolved
+|Run `kub-img path --runtime apptainer --image ./kub-master.sif` and `kub-simulate --runtime apptainer --version`. Then check `KUB_RUNTIME`/`KUB_IMAGE_APPTAINER` and `kub-img info --runtime apptainer --image ./kub-master.sif`.
+
+|Run submitted but status shows no manifests
+|Job failed early
+|Inspect launcher log in run directory (`slurm-<jobid>.out` for Slurm or `local-run.out` for local mode) and run `kub-simulate status --run-id ...`
+
+|Dashboard shows zero runs
+|Index stale or wrong CEMDB root
+|Run `kub-dashboard index --refresh --cemdb-root <root>` and verify `simulations/single/run_*/manifest.json`
+
+|Manifest validation fails on missing artifacts
+|Partial or failed postprocessing
+|Re-run simulation, then validate again; inspect `database/` files referenced by manifest
+
+|===
+
+== 4. Minimal Post-Run Health Check
+
+[source,bash,subs=attributes+]
+----
+# 1) Summary
+kub-dataset --cemdb-root {tutorial_cemdb_root} summary {tutorial_location} --version {tutorial_version}
+
+# 2) Recent run status
+kub-simulate --cemdb-root {tutorial_cemdb_root} status {tutorial_location} --version {tutorial_version} --last 5
+
+# 3) Dashboard index
+kub-dashboard print-index --cemdb-root {tutorial_cemdb_root}
+----
+
+== Next Step
+
+Proceed to xref:command-cheatsheet.adoc[Command Cheatsheet].
