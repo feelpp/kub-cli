@@ -97,6 +97,42 @@ def testBuildPullRequestIgnoresLocalImageOverrideForSourceDerivation() -> None:
     assert request.source == "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif"
 
 
+def testBuildPullRequestApptainerIgnoresLegacyLocalImageForSourceDerivation(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "custom.sif"
+    config = KubConfig(
+        runtime="apptainer",
+        image=str(destination),
+    )
+
+    request = buildKubImgPullRequest(config)
+
+    assert request.runtime == "apptainer"
+    assert request.image == str(destination)
+    assert request.source == "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif"
+
+
+def testBuildPullRequestDockerRejectsInvalidExplicitImageOverride() -> None:
+    config = KubConfig(
+        runtime="docker",
+        imageOverride="/tmp/custom.sif",
+    )
+
+    with pytest.raises(KubCliError, match="Invalid Docker image reference"):
+        buildKubImgPullRequest(config)
+
+
+def testBuildInfoRequestDockerRejectsInvalidLegacyImageValue() -> None:
+    config = KubConfig(
+        runtime="docker",
+        image="/tmp/custom.sif",
+    )
+
+    with pytest.raises(KubCliError, match="Invalid Docker image reference"):
+        buildKubImgInfoRequest(config)
+
+
 def testBuildInfoRequestDocker() -> None:
     config = KubConfig(
         runtime="docker",

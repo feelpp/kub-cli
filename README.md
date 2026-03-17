@@ -236,6 +236,12 @@ Precedence (highest to lowest):
 4. User config: `~/.config/kub-cli/config.toml`
 5. Built-in defaults
 
+Precedence behavior details:
+
+- Scalar settings (`runtime`, `workdir`, `runner`, image values, `verbose`) are last-wins.
+- List settings (`bind`, `apptainer_flags`, `docker_flags`) are additive merged across layers
+  with de-duplication while preserving order.
+
 ### Environment variables
 
 - `KUB_RUNTIME` : `auto|apptainer|docker`
@@ -298,6 +304,12 @@ uv venv .venv
 . .venv/bin/activate
 uv pip install -e '.[dev]'
 pytest
+```
+
+Smoke tests with fake container runners:
+
+```bash
+pytest -q tests/test_smoke_fake_runtimes.py
 ```
 
 Version bumping for maintainers:

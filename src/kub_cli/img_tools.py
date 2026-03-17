@@ -20,7 +20,6 @@ from .errors import ImageNotFoundError, KubCliError
 from .img_integration import (
     buildKubImgInfoRequest,
     buildKubImgPullRequest,
-    resolveApptainerLocalImageReference,
 )
 from .logging_utils import LOGGER, formatCommand
 from .runtime import getRunnerValue, resolveRunnerExecutable
@@ -315,14 +314,15 @@ class KubImgManager:
 
     def printApps(self, *, runtime: str | None) -> int:
         runtimeConfig = self.configWithRuntime(runtime)
+        request = buildKubImgInfoRequest(runtimeConfig)
 
-        if resolveRuntimeString(runtimeConfig.runtime) != "apptainer":
+        if request.runtime != "apptainer":
             raise KubCliError(
                 "kub-img apps is only available with Apptainer runtime. "
                 "Use --runtime apptainer."
             )
 
-        imagePathRaw = resolveApptainerLocalImageReference(runtimeConfig)
+        imagePathRaw = request.image
         imagePath = Path(imagePathRaw).expanduser()
         if not imagePath.exists():
             raise ImageNotFoundError(f"Container image not found: '{imagePath}'.")
@@ -336,15 +336,8 @@ class KubImgManager:
 
     def printImagePath(self, *, runtime: str | None) -> int:
         runtimeConfig = self.configWithRuntime(runtime)
-        resolvedRuntime = resolveRuntimeString(runtimeConfig.runtime)
-
-        if resolvedRuntime == "docker":
-            request = buildKubImgInfoRequest(runtimeConfig)
-            print(request.image)
-            return 0
-
-        imagePath = resolveApptainerLocalImageReference(runtimeConfig)
-        print(imagePath)
+        request = buildKubImgInfoRequest(runtimeConfig)
+        print(request.image)
         return 0
 
     def resolveRunner(self, runtime: str, runtimeConfig: KubConfig) -> str:
@@ -423,12 +416,3 @@ def parseLabelOutput(rawText: str) -> dict[str, str]:
         labels[key.strip()] = value.strip()
 
     return labels
-
-
-def resolveRuntimeString(runtime: str) -> str:
-    normalized = runtime.strip().lower()
-    if normalized not in SUPPORTED_RUNTIMES:
-        raise KubCliError(f"Invalid runtime value: '{runtime}'.")
-    if normalized == "auto":
-        return "apptainer"
-    return normalized

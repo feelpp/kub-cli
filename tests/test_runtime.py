@@ -333,6 +333,42 @@ def testSelectedRuntimeMissingImageRaises(
         resolveRuntimeForExecution(config)
 
 
+def testSelectedDockerRuntimeRejectsInvalidExplicitImageOverride(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = KubConfig(
+        runtime="docker",
+        imageOverride="/tmp/custom.sif",
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    with pytest.raises(ImageNotFoundError, match="Invalid Docker image reference"):
+        resolveRuntimeForExecution(config)
+
+
+def testAutoRuntimeIgnoresLocalImageOverrideWhenFallingBackToDocker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = KubConfig(
+        runtime="auto",
+        imageOverride="/tmp/custom.sif",
+        imageDocker="ghcr.io/feelpp/ktirio-urban-building:master",
+    )
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    resolution = resolveRuntimeForExecution(config)
+
+    assert resolution.runtime == "docker"
+    assert resolution.imageReference == "ghcr.io/feelpp/ktirio-urban-building:master"
+
+
 def testAutoRuntimeFailureHasHelpfulMessage(monkeypatch: pytest.MonkeyPatch) -> None:
     config = KubConfig(runtime="auto")
 
@@ -365,6 +401,43 @@ def testDryRunSkipsSubprocessForDocker(
 
     assert exitCode == 0
     assert called["value"] is False
+
+
+def testDryRunSkipsApptainerInspectProbe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    imagePath = tmp_path / "kub.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    config = KubConfig(
+        runtime="apptainer",
+        imageApptainer=str(imagePath),
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+
+    called = {"value": False}
+
+    def fakeRun(*args, **kwargs):  # type: ignore[no-untyped-def]
+        called["value"] = True
+        return subprocess.CompletedProcess(args=[], returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    runner = KubAppRunner(config=config)
+    exitCode = runner.run(
+        appName="kub-simulate",
+        forwardedArgs=["status", "arz"],
+        dryRun=True,
+    )
+
+    assert exitCode == 0
+    assert called["value"] is False
+    output = capsys.readouterr().out
+    assert "apptainer run" in output
+    assert "--app kub-simulate" in output
 
 
 def testSubprocessExitCodePropagationForApptainer(

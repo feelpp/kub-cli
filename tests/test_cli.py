@@ -12,7 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kub_cli.cli import dashboardApp, datasetApp, simulateApp
-from kub_cli.commands import exposeHostSlurmSupportFiles
+from kub_cli.wrapper_context import exposeHostSlurmSupportFiles
 
 
 @pytest.fixture
@@ -410,6 +410,70 @@ def testMissingWrapperCemdbRootIsCreatedAndUsed(
     assert f"{missingRoot.resolve()}:/cemdb" in volumeValues
 
 
+def testShowConfigIsReadOnlyAndDoesNotCreateCemdbRoot(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    called = {"value": False}
+
+    def fakeRun(*args, **kwargs):  # type: ignore[no-untyped-def]
+        called["value"] = True
+        return subprocess.CompletedProcess(args=[], returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    missingRoot = tmp_path / "missing-cemdb"
+    result = cliRunner.invoke(
+        datasetApp,
+        [
+            "--runtime",
+            "docker",
+            "--show-config",
+            "--cemdb-root",
+            str(missingRoot),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["value"] is False
+    assert not missingRoot.exists()
+    assert '"runtime": "docker"' in result.output
+
+
+def testShowConfigSkipsExecutionEvenWithForwardedArguments(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    called = {"value": False}
+
+    def fakeRun(*args, **kwargs):  # type: ignore[no-untyped-def]
+        called["value"] = True
+        return subprocess.CompletedProcess(args=[], returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        datasetApp,
+        [
+            "--runtime",
+            "docker",
+            "--show-config",
+            "push",
+            "./data",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["value"] is False
+    assert '"runtime": "docker"' in result.output
+
+
 def testExplicitEnvOverridesDefaultCemdbEnv(
     cliRunner: CliRunner,
     monkeypatch: pytest.MonkeyPatch,
@@ -745,7 +809,7 @@ def testSimulateDryRunInjectsSlurmShimsInPath(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr("kub_cli.commands.findExecutable", lambda _: None)
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", lambda _: None)
 
     captured: dict[str, object] = {}
 
@@ -806,7 +870,7 @@ def testSimulateNonDryRunInjectsHostSlurmBridgeWhenAvailable(
             return str(hostSrun)
         return None
 
-    monkeypatch.setattr("kub_cli.commands.findExecutable", fakeWhich)
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", fakeWhich)
 
     captured: dict[str, object] = {}
 
@@ -868,7 +932,7 @@ def testHostSlurmBridgeSkipsSameFileCopy(
             return str(localSrun)
         return None
 
-    monkeypatch.setattr("kub_cli.commands.findExecutable", fakeFindExecutable)
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", fakeFindExecutable)
 
     captured: dict[str, object] = {}
 
@@ -902,7 +966,7 @@ def testSimulatePreprocessInjectsSlurmShimsWhenHostSlurmMissing(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr("kub_cli.commands.findExecutable", lambda _: None)
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", lambda _: None)
 
     captured: dict[str, object] = {}
 
@@ -960,7 +1024,7 @@ def testSimulateApptainerProfileExposesHostApptainerExecutable(
     imagePath = tmp_path / "kub.sif"
     imagePath.write_text("dummy", encoding="utf-8")
 
-    monkeypatch.setattr("kub_cli.commands.findExecutable", lambda _: None)
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", lambda _: None)
 
     captured: dict[str, object] = {}
 
@@ -1026,7 +1090,7 @@ def testSimulateSlurmProfileDefaultsToHostWorkdirAndHostBind(
     imagePath = tmp_path / "kub.sif"
     imagePath.write_text("dummy", encoding="utf-8")
 
-    monkeypatch.setattr("kub_cli.commands.findExecutable", lambda _: None)
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", lambda _: None)
 
     captured: dict[str, object] = {}
 
@@ -1090,19 +1154,19 @@ def testExposeHostSlurmSupportFilesIncludesIdentityFiles(
     nsswitchFile.write_text("passwd: files\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        "kub_cli.commands.SLURM_LIBRARY_DIR_CANDIDATES",
+        "kub_cli.wrapper_context.SLURM_LIBRARY_DIR_CANDIDATES",
         (slurmLibDir,),
     )
     monkeypatch.setattr(
-        "kub_cli.commands.SLURM_CONFIG_DIR_CANDIDATES",
+        "kub_cli.wrapper_context.SLURM_CONFIG_DIR_CANDIDATES",
         (slurmCfgDir,),
     )
     monkeypatch.setattr(
-        "kub_cli.commands.SLURM_IDENTITY_FILE_CANDIDATES",
+        "kub_cli.wrapper_context.SLURM_IDENTITY_FILE_CANDIDATES",
         (passwdFile, groupFile, nsswitchFile),
     )
     monkeypatch.setattr(
-        "kub_cli.commands.SLURM_MUNGE_PATH_CANDIDATES",
+        "kub_cli.wrapper_context.SLURM_MUNGE_PATH_CANDIDATES",
         (mungeDir,),
     )
 

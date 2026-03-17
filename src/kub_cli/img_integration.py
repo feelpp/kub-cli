@@ -11,16 +11,19 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 from typing import Any, Literal
 
-from .config import DEFAULT_DOCKER_IMAGE, KubConfig, SUPPORTED_RUNTIMES, looksLikeContainerReference
+from .config import KubConfig, SUPPORTED_RUNTIMES
 from .errors import KubCliError, RuntimeSelectionError
+from .image_resolution import (
+    deriveApptainerOrasReference,
+    resolveApptainerLocalImageReference,
+    resolveDockerUpstreamReference,
+)
 from .logging_utils import LOGGER, formatCommand
 from .runtime import (
-    deriveApptainerOrasReference,
     getRunnerValue,
     tryResolveRunnerExecutable,
 )
@@ -210,7 +213,11 @@ def buildKubImgPullRequest(config: KubConfig) -> KubImgPullRequest:
     if explicitApptainerReference is not None and explicitApptainerReference.startswith("oras://"):
         source = explicitApptainerReference
     else:
-        dockerImage = resolveDockerUpstreamReference(config)
+        dockerImage = resolveDockerUpstreamReference(
+            config,
+            includeImageOverride=False,
+            strictLegacyImage=False,
+        )
         source = deriveApptainerOrasReference(dockerImage)
 
     if source.startswith("docker://"):
@@ -223,94 +230,3 @@ def buildKubImgPullRequest(config: KubConfig) -> KubImgPullRequest:
         image=destinationImage,
         source=source,
     )
-
-
-def resolveApptainerLocalImageReference(config: KubConfig) -> str:
-    candidates = [config.imageOverride, config.imageApptainer, config.image]
-
-    for candidate in candidates:
-        if candidate is None:
-            continue
-
-        normalized = candidate.strip()
-        if not normalized:
-            continue
-
-        if "://" in normalized:
-            continue
-
-        return normalized
-
-    defaultFilename = deriveDefaultApptainerImageFilename(config)
-    return str((Path.cwd() / defaultFilename).resolve())
-
-
-def resolveDockerUpstreamReference(config: KubConfig) -> str:
-    candidates = [config.imageOverride, config.imageDocker, config.image, DEFAULT_DOCKER_IMAGE]
-
-    for candidate in candidates:
-        if candidate is None:
-            continue
-
-        normalized = candidate.strip()
-        if not normalized:
-            continue
-
-        if normalized.startswith("docker://"):
-            normalized = normalized[len("docker://") :]
-
-        if "://" in normalized:
-            continue
-
-        if looksLikeContainerReference(normalized):
-            return normalized
-
-    raise KubCliError(
-        "No Docker image configured for image operation. "
-        "Set --image, KUB_IMAGE_DOCKER, or KUB_IMAGE."
-    )
-
-
-def deriveDefaultApptainerImageFilename(config: KubConfig) -> str:
-    dockerReference = resolveDockerUpstreamReference(config)
-    _, tag = splitImageReference(dockerReference)
-
-    normalizedTag = tag
-    if normalizedTag.endswith("-sif"):
-        normalizedTag = normalizedTag[: -len("-sif")]
-    if normalizedTag.endswith(".sif"):
-        normalizedTag = normalizedTag[: -len(".sif")]
-    if not normalizedTag:
-        normalizedTag = "latest"
-
-    safeTag = sanitizePathToken(normalizedTag)
-    return f"kub-{safeTag}.sif"
-
-
-def splitImageReference(reference: str) -> tuple[str, str]:
-    normalized = reference.strip()
-    if not normalized:
-        return "kub-image", "latest"
-
-    withoutDigest = normalized.split("@", maxsplit=1)[0]
-    lastSlash = withoutDigest.rfind("/")
-    lastColon = withoutDigest.rfind(":")
-
-    if lastColon > lastSlash:
-        repository = withoutDigest[:lastColon]
-        tag = withoutDigest[lastColon + 1 :]
-    else:
-        repository = withoutDigest
-        tag = "latest"
-
-    if not repository:
-        repository = "kub-image"
-    if not tag:
-        tag = "latest"
-
-    return repository, tag
-
-
-def sanitizePathToken(value: str) -> str:
-    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-")
-    return sanitized or "image"

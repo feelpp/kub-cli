@@ -118,6 +118,10 @@ def loadKubConfig(
     """Load effective configuration using precedence:
 
     CLI options > environment variables > project config > user config > defaults.
+
+    Note: list-valued settings (`bind`, `apptainer_flags`, `docker_flags`) are
+    merged additively across layers with de-duplication while preserving order.
+    Scalar values still follow last-wins precedence.
     """
 
     runtimeCwd = (cwd or Path.cwd()).resolve()
