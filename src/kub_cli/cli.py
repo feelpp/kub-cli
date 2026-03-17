@@ -266,6 +266,15 @@ def createMetaApp() -> typer.Typer:
         elif result.changelogPath.exists():
             typer.echo(f"changelog: {result.changelogPath} (unchanged)")
 
+        if result.changed:
+            releaseTag = f"v{result.newVersion}"
+            if dryRun:
+                typer.echo("Release tag commands (after running bump without --dry-run):")
+            else:
+                typer.echo("Release tag commands:")
+            typer.echo(f"git tag {releaseTag}")
+            typer.echo(f"git push origin {releaseTag}")
+
     return app
 
 

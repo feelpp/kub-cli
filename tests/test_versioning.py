@@ -159,6 +159,8 @@ def testMetaBumpCommandUpdatesVersion(cliRunner: CliRunner, tmp_path: Path) -> N
 
     assert result.exit_code == 0
     assert "Updated version: 3.0.1 -> 3.1.0" in result.stdout
+    assert "git tag v3.1.0" in result.stdout
+    assert "git push origin v3.1.0" in result.stdout
     assert "kub-cli thin wrapper" not in result.stdout
 
     pyprojectContent = (projectRoot / "pyproject.toml").read_text(encoding="utf-8")
@@ -179,6 +181,8 @@ def testMetaBumpCommandDryRun(cliRunner: CliRunner, tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Planned version: 4.4.4 -> 4.4.5" in result.stdout
+    assert "git tag v4.4.5" in result.stdout
+    assert "git push origin v4.4.5" in result.stdout
 
     pyprojectContent = (projectRoot / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = "4.4.4"' in pyprojectContent
