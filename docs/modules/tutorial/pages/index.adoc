@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
 = KUB CLI Tutorial
 :navtitle: Tutorial
 :description: End-user command-line tutorial for dataset operations, simulation submission, and dashboard exploration

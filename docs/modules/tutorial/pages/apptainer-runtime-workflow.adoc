@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
 = Apptainer Runtime Workflow
 :description: Run kub-simulate with the kub-cli Apptainer wrapper settings
 :page-tags: tutorial, apptainer, simulation, kub-simulate

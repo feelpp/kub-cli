@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2026 University of Strasbourg
+// SPDX-FileContributor: Christophe Prud'homme
+// SPDX-FileContributor: Cemosis
+// SPDX-License-Identifier: Apache-2.0
+
 = Run Simulation
 :description: Submit preprocessing and simulation jobs using kub-simulate
 :page-tags: tutorial, simulation, kub-simulate

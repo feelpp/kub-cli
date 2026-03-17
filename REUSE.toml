@@ -7,3 +7,11 @@ version = 1
 SPDX-PackageName = "kub-cli"
 SPDX-PackageSupplier = "Organization: University of Strasbourg"
 SPDX-PackageDownloadLocation = "https://github.com/feelpp/kub-cli"
+
+[[annotations]]
+path = [
+  "package.json",
+  "package-lock.json"
+]
+SPDX-License-Identifier = "Apache-2.0"
+SPDX-FileCopyrightText = "2026 University of Strasbourg"
