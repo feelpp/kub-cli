@@ -40,9 +40,8 @@ Public Dataset::
 --
 [source,bash,subs=attributes+]
 ----
-kub-dataset pull {tutorial_location} \
+kub-dataset --cemdb-root {tutorial_cemdb_root} pull {tutorial_location} \
   --version {tutorial_version} \
-  --cemdb-root {tutorial_cemdb_locations} \
   --dmp girder-unistra
 ----
 --
@@ -52,9 +51,8 @@ Authenticated Pull::
 --
 [source,bash,subs=attributes+]
 ----
-kub-dataset pull {tutorial_location} \
+kub-dataset --cemdb-root {tutorial_cemdb_root} pull {tutorial_location} \
   --version {tutorial_version} \
-  --cemdb-root {tutorial_cemdb_locations} \
   --dmp girder-unistra \
   --api-key "$GIRDER_API_KEY"
 ----
@@ -70,9 +68,8 @@ Current `kub-dataset` defaults use split archive behavior for `pull` and `push` 
 
 [source,bash,subs=attributes+]
 ----
-kub-dataset pull-simulator \
+kub-dataset --cemdb-root {tutorial_cemdb_root} pull-simulator \
   --version {tutorial_simulator_version} \
-  --cemdb-root {tutorial_cemdb_root} \
   --force
 ----
 
@@ -80,8 +77,8 @@ kub-dataset pull-simulator \
 
 [source,bash,subs=attributes+]
 ----
-kub-dataset summary {tutorial_location} --cemdb-root {tutorial_cemdb_locations}
-kub-dataset manifest-show {tutorial_location} --version {tutorial_version} --cemdb-root {tutorial_cemdb_locations}
+kub-dataset --cemdb-root {tutorial_cemdb_root} summary {tutorial_location}
+kub-dataset --cemdb-root {tutorial_cemdb_root} manifest-show {tutorial_location} --version {tutorial_version}
 ----
 
 == 5. Optional: Track Pulls With DVC
@@ -89,7 +86,7 @@ kub-dataset manifest-show {tutorial_location} --version {tutorial_version} --cem
 [source,bash,subs=attributes+]
 ----
 kub-dataset init
-kub-dataset pull {tutorial_location} --version {tutorial_version} --dvc --force --cemdb-root {tutorial_cemdb_locations}
+kub-dataset --cemdb-root {tutorial_cemdb_root} pull {tutorial_location} --version {tutorial_version} --dvc --force
 kub-dataset status
 ----
 

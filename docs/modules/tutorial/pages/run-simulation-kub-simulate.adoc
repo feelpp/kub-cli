@@ -157,9 +157,8 @@ kub-simulate --runtime apptainer run {tutorial_location} \
 
 [source,bash,subs=attributes+]
 ----
-kub-simulate --runtime apptainer status {tutorial_location} \
+kub-simulate --runtime apptainer --cemdb-root {tutorial_cemdb_root} status {tutorial_location} \
   --version {tutorial_version} \
-  --cemdb-root {tutorial_cemdb_locations} \
   --last 10
 ----
 
@@ -167,9 +166,8 @@ Inspect a single run in detail:
 
 [source,bash,subs=attributes+]
 ----
-kub-simulate --runtime apptainer status {tutorial_location} \
+kub-simulate --runtime apptainer --cemdb-root {tutorial_cemdb_root} status {tutorial_location} \
   --version {tutorial_version} \
-  --cemdb-root {tutorial_cemdb_locations} \
   --run-id run_YYYY-MM-DD_HH-MM-SS
 ----
 

@@ -13,5 +13,6 @@
 `CEMDB_ROOT` environment variable:
 
 - `kub-dashboard` uses `CEMDB_ROOT` as its default CEMDB path.
-- For `kub-dataset` and `kub-simulate`, use `--cemdb-root` when your data is not under `./cemdb/locations`.
+- For wrapper commands, pass the CEMDB root (for example `cemdb`) to `--cemdb-root`, not `cemdb/locations`.
+- Keep `cemdb/locations` for dataset path references (for example manifest or layout paths).
 ====

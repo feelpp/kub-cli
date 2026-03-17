@@ -31,7 +31,7 @@ kub-dataset manifest-validate --strict {tutorial_cemdb_locations}/{tutorial_loca
 
 [source,bash,subs=attributes+]
 ----
-kub-dataset summary {tutorial_location} --version {tutorial_version} --cemdb-root {tutorial_cemdb_locations}
+kub-dataset --cemdb-root {tutorial_cemdb_root} summary {tutorial_location} --version {tutorial_version}
 ----
 
 == 3. Common Issues
@@ -63,10 +63,10 @@ kub-dataset summary {tutorial_location} --version {tutorial_version} --cemdb-roo
 [source,bash,subs=attributes+]
 ----
 # 1) Summary
-kub-dataset summary {tutorial_location} --version {tutorial_version} --cemdb-root {tutorial_cemdb_locations}
+kub-dataset --cemdb-root {tutorial_cemdb_root} summary {tutorial_location} --version {tutorial_version}
 
 # 2) Recent run status
-kub-simulate status {tutorial_location} --version {tutorial_version} --cemdb-root {tutorial_cemdb_locations} --last 5
+kub-simulate --cemdb-root {tutorial_cemdb_root} status {tutorial_location} --version {tutorial_version} --last 5
 
 # 3) Dashboard index
 kub-dashboard print-index --cemdb-root {tutorial_cemdb_root}

@@ -123,9 +123,8 @@ Use `--apptainer-flag` if you need a lower-level runtime knob not exposed by kub
 
 [source,bash,subs=attributes+]
 ----
-kub-simulate --runtime apptainer status {tutorial_location} \
+kub-simulate --runtime apptainer --cemdb-root {tutorial_cemdb_root} status {tutorial_location} \
   --version {tutorial_version} \
-  --cemdb-root {tutorial_cemdb_locations} \
   --last 10
 
 find {tutorial_cemdb_locations}/{tutorial_location}/v{tutorial_version}/simulations/single -maxdepth 2 -name manifest.json | sort

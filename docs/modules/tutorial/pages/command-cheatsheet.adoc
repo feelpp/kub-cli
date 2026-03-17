@@ -22,9 +22,9 @@ include::partial$cemdb-root-defaults.adoc[]
 ----
 kub-dataset list-dmps
 kub-dataset list-locations --show-versions
-kub-dataset pull {tutorial_location} --version {tutorial_version} --cemdb-root {tutorial_cemdb_locations} --dmp girder-unistra --api-key "$GIRDER_API_KEY"
-kub-dataset pull-simulator --version {tutorial_simulator_version} --cemdb-root {tutorial_cemdb_root} --force
-kub-dataset summary {tutorial_location} --cemdb-root {tutorial_cemdb_locations}
+kub-dataset --cemdb-root {tutorial_cemdb_root} pull {tutorial_location} --version {tutorial_version} --dmp girder-unistra --api-key "$GIRDER_API_KEY"
+kub-dataset --cemdb-root {tutorial_cemdb_root} pull-simulator --version {tutorial_simulator_version} --force
+kub-dataset --cemdb-root {tutorial_cemdb_root} summary {tutorial_location}
 ----
 
 == Wrapper Helpers (kub-img and kub-simulate)
@@ -62,9 +62,8 @@ kub-simulate --runtime apptainer --image ./kub-master.sif run {tutorial_location
   --version {tutorial_version} --profile apptainer-slurm --np {tutorial_np}
 kub-simulate --runtime apptainer --image ./kub-master.sif run {tutorial_location} \
   --version {tutorial_version} --profile apptainer-local --np {tutorial_np}
-kub-simulate --runtime apptainer --image ./kub-master.sif status {tutorial_location} \
+kub-simulate --runtime apptainer --image ./kub-master.sif --cemdb-root {tutorial_cemdb_root} status {tutorial_location} \
   --version {tutorial_version} \
-  --cemdb-root {tutorial_cemdb_locations} \
   --last 10
 ----
 
