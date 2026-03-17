@@ -9,6 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## 0.9.0 - 2026-03-17
 - Added `kub-cli bump` command for SemVer version updates in `pyproject.toml` and fallback package version
 - Added GitHub Actions workflow for PyPI publishing via GitHub environment `pypi` (`.github/workflows/publish.yml`)
 - Added release validation script enforcing `vMAJOR.MINOR.PATCH` tags and tag/version matching
