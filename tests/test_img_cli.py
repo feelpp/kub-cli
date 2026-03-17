@@ -49,6 +49,31 @@ def testApptainerPullDryRunUsesOrasSource(
     assert "docker://" not in result.output
 
 
+def testApptainerPullDryRunWorksWithDefaults(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "pull",
+            "--runtime",
+            "apptainer",
+            "--dry-run",
+        ],
+    )
+
+    expectedImage = str((tmp_path / "kub-master.sif").resolve())
+    assert result.exit_code == 0
+    assert "apptainer pull" in result.output
+    assert expectedImage in result.output
+    assert "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif" in result.output
+
+
 def testDockerPullCommandBuildsExpectedArguments(
     cliRunner: CliRunner,
     monkeypatch: pytest.MonkeyPatch,

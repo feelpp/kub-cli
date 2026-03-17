@@ -10,9 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Sequence
 
 from .config import (
     DEFAULT_APPTAINER_IMAGE,
@@ -26,6 +27,7 @@ from .logging_utils import LOGGER, formatCommand
 
 
 ResolvedRuntime = Literal["apptainer", "docker"]
+DASHBOARD_APP_NAME = "kub-dashboard"
 
 
 @dataclass(frozen=True)
@@ -186,14 +188,36 @@ def tryResolveRunnerExecutable(runnerValue: str) -> str | None:
 def resolveApptainerExecutionImage(config: KubConfig) -> str:
     """Resolve Apptainer execution image reference (local path or oras:// URI)."""
 
-    imageReference = getRuntimeCandidateImage(config, "apptainer")
-    if imageReference is None:
-        raise ImageNotFoundError(
-            "No Apptainer image configured for runtime 'apptainer'. "
-            "Set --image, KUB_IMAGE_APPTAINER, or KUB_IMAGE."
-        )
+    explicitImage = resolveExplicitApptainerImage(config)
+    if explicitImage is not None:
+        return explicitImage
 
-    normalizedReference = imageReference.strip()
+    localDefaultImage = resolveLocalDefaultApptainerImage(config)
+    if localDefaultImage is not None:
+        return localDefaultImage
+
+    dockerReference = resolveDockerReferenceForApptainerDerivation(config)
+    return deriveApptainerOrasReference(dockerReference)
+
+
+def resolveExplicitApptainerImage(config: KubConfig) -> str | None:
+    candidates = [config.imageOverride, config.imageApptainer, config.image]
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+
+        normalizedReference = candidate.strip()
+        if not normalizedReference:
+            continue
+
+        return normalizeApptainerImageReference(normalizedReference)
+
+    return None
+
+
+def normalizeApptainerImageReference(reference: str) -> str:
+    normalizedReference = reference.strip()
 
     if normalizedReference.startswith("docker://"):
         raise ImageNotFoundError(
@@ -224,6 +248,110 @@ def resolveApptainerExecutionImage(config: KubConfig) -> str:
         )
 
     return str(imagePath)
+
+
+def resolveLocalDefaultApptainerImage(config: KubConfig) -> str | None:
+    candidateFilenames = [
+        deriveDefaultApptainerImageFilename(config),
+        deriveLegacyDefaultApptainerImageFilename(config),
+    ]
+
+    for filename in candidateFilenames:
+        candidatePath = (Path.cwd() / filename).resolve()
+        if not candidatePath.exists():
+            continue
+
+        if candidatePath.is_dir():
+            raise ImageNotFoundError(
+                f"Container image must be a file, got directory: '{candidatePath}'."
+            )
+
+        return str(candidatePath)
+
+    return None
+
+
+def resolveDockerReferenceForApptainerDerivation(config: KubConfig) -> str:
+    candidates = [config.imageDocker, config.image, DEFAULT_DOCKER_IMAGE]
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+
+        normalized = candidate.strip()
+        if not normalized:
+            continue
+
+        if normalized.startswith("docker://"):
+            normalized = normalized[len("docker://") :]
+
+        if "://" in normalized:
+            continue
+
+        if looksLikeContainerReference(normalized):
+            return normalized
+
+    return DEFAULT_DOCKER_IMAGE
+
+
+def deriveDefaultApptainerImageFilename(config: KubConfig) -> str:
+    dockerReference = resolveDockerReferenceForApptainerDerivation(config)
+    _, tag = splitImageReference(dockerReference)
+
+    normalizedTag = tag
+    if normalizedTag.endswith("-sif"):
+        normalizedTag = normalizedTag[: -len("-sif")]
+    if normalizedTag.endswith(".sif"):
+        normalizedTag = normalizedTag[: -len(".sif")]
+    if not normalizedTag:
+        normalizedTag = "latest"
+
+    return f"kub-{sanitizePathToken(normalizedTag)}.sif"
+
+
+def deriveLegacyDefaultApptainerImageFilename(config: KubConfig) -> str:
+    dockerReference = resolveDockerReferenceForApptainerDerivation(config)
+    repository, tag = splitImageReference(dockerReference)
+    imageName = repository.rsplit("/", maxsplit=1)[-1] or "kub-image"
+
+    normalizedTag = tag
+    if normalizedTag.endswith("-sif"):
+        normalizedTag = normalizedTag[: -len("-sif")]
+    if normalizedTag.endswith(".sif"):
+        normalizedTag = normalizedTag[: -len(".sif")]
+    if not normalizedTag:
+        normalizedTag = "latest"
+
+    return f"{sanitizePathToken(imageName)}-{sanitizePathToken(normalizedTag)}.sif"
+
+
+def splitImageReference(reference: str) -> tuple[str, str]:
+    normalized = reference.strip()
+    if not normalized:
+        return "kub-image", "latest"
+
+    withoutDigest = normalized.split("@", maxsplit=1)[0]
+    lastSlash = withoutDigest.rfind("/")
+    lastColon = withoutDigest.rfind(":")
+
+    if lastColon > lastSlash:
+        repository = withoutDigest[:lastColon]
+        tag = withoutDigest[lastColon + 1 :]
+    else:
+        repository = withoutDigest
+        tag = "latest"
+
+    if not repository:
+        repository = "kub-image"
+    if not tag:
+        tag = "latest"
+
+    return repository, tag
+
+
+def sanitizePathToken(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-")
+    return sanitized or "image"
 
 
 def resolveDockerExecutionImage(config: KubConfig) -> str:
@@ -376,6 +504,26 @@ class ApptainerCommandBuilder:
 
         return command
 
+    def buildExec(self, forwardedArgs: Sequence[str]) -> list[str]:
+        runner = self.resolveRunner()
+        image = self.resolveImage()
+
+        command: list[str] = [runner, "exec"]
+
+        if self.config.apptainerFlags:
+            command.extend(self.config.apptainerFlags)
+
+        for bindSpec in self.config.binds:
+            command.extend(["--bind", bindSpec])
+
+        if self.config.workdir:
+            command.extend(["--pwd", self.config.workdir])
+
+        command.extend([image, self.appName])
+        command.extend(forwardedArgs)
+
+        return command
+
 
 @dataclass(frozen=True)
 class DockerCommandBuilder:
@@ -399,6 +547,11 @@ class DockerCommandBuilder:
 
         if self.config.dockerFlags:
             command.extend(self.config.dockerFlags)
+
+        if self.appName == DASHBOARD_APP_NAME and not dockerFlagsContainNetwork(
+            self.config.dockerFlags
+        ):
+            command.extend(["--network", "host"])
 
         if not dockerFlagsContainUser(self.config.dockerFlags):
             userValue = buildDockerUserValue()
@@ -428,6 +581,15 @@ def dockerFlagsContainUser(dockerFlags: Sequence[str]) -> bool:
     )
 
 
+def dockerFlagsContainNetwork(dockerFlags: Sequence[str]) -> bool:
+    return any(
+        flag in {"--network", "--net"}
+        or flag.startswith("--network=")
+        or flag.startswith("--net=")
+        for flag in dockerFlags
+    )
+
+
 def buildDockerUserValue() -> str | None:
     if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
         return None
@@ -452,10 +614,24 @@ class KubAppRunner:
 
         if runtimeResolution.runtime == "apptainer":
             builder = ApptainerCommandBuilder(appName=appName, config=self.config)
+            command = builder.build(forwardedArgs)
+            try:
+                if shouldUseApptainerExecForLocalImage(
+                    runnerPath=runtimeResolution.runnerPath,
+                    imageReference=runtimeResolution.imageReference,
+                    appName=appName,
+                ):
+                    command = builder.buildExec(forwardedArgs)
+                    if self.config.verbose:
+                        LOGGER.debug(
+                            "Apptainer app '%s' not found in local image; using exec fallback.",
+                            appName,
+                        )
+            except KeyboardInterrupt:
+                return 130
         else:
             builder = DockerCommandBuilder(appName=appName, config=self.config)
-
-        command = builder.build(forwardedArgs)
+            command = builder.build(forwardedArgs)
 
         if self.config.verbose:
             LOGGER.debug(
@@ -471,6 +647,7 @@ class KubAppRunner:
         executionEnv = dict(os.environ)
         if runtimeResolution.runtime == "apptainer":
             executionEnv.update(self.config.env)
+            injectApptainerContainerEnv(executionEnv, self.config.env)
 
         try:
             completed = subprocess.run(command, check=False, env=executionEnv)
@@ -480,3 +657,78 @@ class KubAppRunner:
             raise KubCliError(f"Unable to execute runtime command: {error}") from error
 
         return completed.returncode
+
+
+def injectApptainerContainerEnv(
+    executionEnv: dict[str, str],
+    containerEnv: Sequence[tuple[str, str]] | Mapping[str, str],
+) -> None:
+    """Propagate explicit container env through Apptainer runtime variables."""
+
+    if isinstance(containerEnv, Mapping):
+        entries = containerEnv.items()
+    else:
+        entries = containerEnv
+
+    disallowedKeys = {"HOME"}
+
+    for key, value in entries:
+        if key in disallowedKeys:
+            continue
+        executionEnv[f"APPTAINERENV_{key}"] = value
+        executionEnv[f"SINGULARITYENV_{key}"] = value
+
+
+def shouldUseApptainerExecForLocalImage(
+    *,
+    runnerPath: str,
+    imageReference: str,
+    appName: str,
+) -> bool:
+    if "://" in imageReference:
+        return False
+
+    imagePath = Path(imageReference).expanduser()
+    if not imagePath.exists() or imagePath.is_dir():
+        return False
+
+    apps = inspectApptainerApps(
+        runnerPath=runnerPath,
+        imagePath=imagePath,
+    )
+    if apps is None:
+        return False
+
+    return appName not in apps
+
+
+def inspectApptainerApps(
+    *,
+    runnerPath: str,
+    imagePath: Path,
+) -> set[str] | None:
+    inspectCommand = [
+        runnerPath,
+        "inspect",
+        "--list-apps",
+        str(imagePath),
+    ]
+
+    try:
+        completed = subprocess.run(
+            inspectCommand,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, TypeError):
+        return None
+
+    if completed.returncode != 0:
+        return None
+
+    return {
+        line.strip()
+        for line in completed.stdout.splitlines()
+        if line.strip()
+    }

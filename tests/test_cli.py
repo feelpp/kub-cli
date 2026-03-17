@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kub_cli.cli import dashboardApp, datasetApp, simulateApp
+from kub_cli.commands import exposeHostSlurmSupportFiles
 
 
 @pytest.fixture
@@ -361,8 +362,8 @@ def testExplicitWrapperCemdbRootIsMountedAndForwarded(
     volumeValues = extractFlagValues(command, "--volume")
     assert f"{hostCemdb.resolve()}:/cemdb" in volumeValues
     assert command[-4:] == [
-        "ghcr.io/feelpp/ktirio-urban-building:master",
-        "kub-simulate",
+        "--config",
+        "/cemdb/.kub-simulate.toml",
         "run",
         "case.yaml",
     ]
@@ -451,3 +452,666 @@ def testExplicitEnvOverridesDefaultCemdbEnv(
     envValues = extractFlagValues(command, "--env")
     assert "HOME=/tmp/custom-home" in envValues
     assert "KUB_CONFIG=/tmp/custom-kub.toml" in envValues
+
+
+def testSimulatePreprocessArgumentsAreForwardedUnchanged(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "preprocess",
+            "arz",
+            "--version",
+            "0.1.0",
+            "--profile",
+            "apptainer-slurm",
+            "--partitions",
+            "32",
+            "64",
+            "128",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    imageIndex = command.index("ghcr.io/feelpp/ktirio-urban-building:master")
+    assert command[imageIndex:] == [
+        "ghcr.io/feelpp/ktirio-urban-building:master",
+        "kub-simulate",
+        "--config",
+        "/cemdb/.kub-simulate.toml",
+        "preprocess",
+        "arz",
+        "--version",
+        "0.1.0",
+        "--profile",
+        "apptainer-slurm",
+        "--partitions",
+        "32",
+        "64",
+        "128",
+        "--dry-run",
+    ]
+
+
+def testSimulateInnerRuntimeOptionIsForwarded(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "run",
+            "arz",
+            "--runtime",
+            "apptainer",
+            "--apptainer-image",
+            "/cemdb/sim.sif",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    imageIndex = command.index("ghcr.io/feelpp/ktirio-urban-building:master")
+    assert command[imageIndex:] == [
+        "ghcr.io/feelpp/ktirio-urban-building:master",
+        "kub-simulate",
+        "--config",
+        "/cemdb/.kub-simulate.toml",
+        "run",
+        "arz",
+        "--runtime",
+        "apptainer",
+        "--apptainer-image",
+        "/cemdb/sim.sif",
+        "--dry-run",
+    ]
+
+
+def testSimulateConfigSubcommandIsForwarded(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "config",
+            "show",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    imageIndex = command.index("ghcr.io/feelpp/ktirio-urban-building:master")
+    assert command[imageIndex:] == [
+        "ghcr.io/feelpp/ktirio-urban-building:master",
+        "kub-simulate",
+        "--config",
+        "/cemdb/.kub-simulate.toml",
+        "config",
+        "show",
+    ]
+
+
+def testSimulateExplicitConfigOptionOverridesWrapperDefault(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "--",
+            "--config",
+            "/cemdb/custom.toml",
+            "status",
+            "arz",
+            "--last",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    imageIndex = command.index("ghcr.io/feelpp/ktirio-urban-building:master")
+    assert command[imageIndex:] == [
+        "ghcr.io/feelpp/ktirio-urban-building:master",
+        "kub-simulate",
+        "--config",
+        "/cemdb/custom.toml",
+        "status",
+        "arz",
+        "--last",
+        "5",
+    ]
+
+
+def testSimulateConfigIsMirroredToNestedCemdbFile(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cemdb").mkdir()
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    rootConfig = tmp_path / ".kub-simulate.toml"
+    nestedConfig = tmp_path / "cemdb" / ".kub-simulate.toml"
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        rootConfig.write_text(
+            "# kub-simulate user configuration\n\n"
+            "[defaults]\n"
+            "cemdb_root = \"cemdb/locations\"\n\n"
+            "[profiles.apptainer-slurm]\n"
+            "partition = \"public\"\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "config",
+            "set",
+            "partition",
+            "public",
+            "--profile-target",
+            "apptainer-slurm",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert rootConfig.exists()
+    assert nestedConfig.exists()
+    assert "partition = \"public\"" in nestedConfig.read_text(encoding="utf-8")
+
+
+def testSimulateRootConfigIsInitializedFromNestedFileWhenMissing(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    nestedDir = tmp_path / "cemdb"
+    nestedDir.mkdir()
+    nestedConfig = nestedDir / ".kub-simulate.toml"
+    nestedConfig.write_text(
+        "# kub-simulate user configuration\n\n[defaults]\ncemdb_root = \"cemdb/locations\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "status",
+            "arz",
+            "--last",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    rootConfig = tmp_path / ".kub-simulate.toml"
+    assert rootConfig.exists()
+    assert "cemdb_root = \"cemdb/locations\"" in rootConfig.read_text(encoding="utf-8")
+
+
+def testSimulateDryRunInjectsSlurmShimsInPath(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr("kub_cli.commands.findExecutable", lambda _: None)
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    envValues = extractFlagValues(command, "--env")
+    pathValues = [value for value in envValues if value.startswith("PATH=")]
+    assert len(pathValues) == 1
+    assert pathValues[0].startswith("PATH=/cemdb/.kub-cli/shims:")
+
+    shimDir = tmp_path / ".kub-cli" / "shims"
+    assert (shimDir / "sbatch").exists()
+    assert (shimDir / "srun").exists()
+
+
+def testSimulateNonDryRunInjectsHostSlurmBridgeWhenAvailable(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    hostBin = tmp_path / "host-bin"
+    hostBin.mkdir()
+    hostSbatch = hostBin / "sbatch"
+    hostSrun = hostBin / "srun"
+    hostSbatch.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hostSrun.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hostSbatch.chmod(0o755)
+    hostSrun.chmod(0o755)
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "sbatch":
+            return str(hostSbatch)
+        if name == "srun":
+            return str(hostSrun)
+        return None
+
+    monkeypatch.setattr("kub_cli.commands.findExecutable", fakeWhich)
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    envValues = extractFlagValues(command, "--env")
+    pathValues = [value for value in envValues if value.startswith("PATH=")]
+    assert len(pathValues) == 1
+    assert pathValues[0].startswith("PATH=/cemdb/.kub-cli/shims:")
+    assert "/cemdb/.kub-cli/host-bin:" in pathValues[0]
+
+    bridgeDir = tmp_path / ".kub-cli" / "host-bin"
+    assert (bridgeDir / "sbatch").exists()
+    assert (bridgeDir / "srun").exists()
+
+
+def testHostSlurmBridgeSkipsSameFileCopy(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    bridgeDir = tmp_path / ".kub-cli" / "host-bin"
+    bridgeDir.mkdir(parents=True)
+
+    localSbatch = bridgeDir / "sbatch"
+    localSrun = bridgeDir / "srun"
+    localSbatch.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    localSrun.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    localSbatch.chmod(0o755)
+    localSrun.chmod(0o755)
+
+    def fakeFindExecutable(name: str) -> str | None:
+        if name == "sbatch":
+            return str(localSbatch)
+        if name == "srun":
+            return str(localSrun)
+        return None
+
+    monkeypatch.setattr("kub_cli.commands.findExecutable", fakeFindExecutable)
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+        ],
+    )
+
+    assert result.exit_code == 0
+
+
+def testSimulatePreprocessInjectsSlurmShimsWhenHostSlurmMissing(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr("kub_cli.commands.findExecutable", lambda _: None)
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+            "--partitions",
+            "32",
+            "64",
+            "128",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    envValues = extractFlagValues(command, "--env")
+    pathValues = [value for value in envValues if value.startswith("PATH=")]
+    assert len(pathValues) == 1
+    assert pathValues[0] == (
+        "PATH=/cemdb/.kub-cli/shims:"
+        "/opt/kub-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    )
+
+    shimDir = tmp_path / ".kub-cli" / "shims"
+    assert (shimDir / "sbatch").exists()
+    assert (shimDir / "srun").exists()
+
+
+def testSimulateApptainerProfileExposesHostApptainerExecutable(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    runnerPath = tmp_path / "opt" / "apptainer" / "latest" / "bin" / "apptainer"
+    runnerPath.parent.mkdir(parents=True)
+    runnerPath.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    runnerPath.chmod(0o755)
+
+    imagePath = tmp_path / "kub.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setattr("kub_cli.commands.findExecutable", lambda _: None)
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check=False, env=None, capture_output=False, text=False):  # type: ignore[no-untyped-def]
+        if len(command) >= 3 and command[1] == "inspect" and command[2] == "--list-apps":
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="kub-simulate\nkub-dataset\nkub-dashboard\n",
+                stderr="",
+            )
+
+        captured["command"] = command
+        captured["env"] = env
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "apptainer",
+            "--runner",
+            str(runnerPath),
+            "--image",
+            str(imagePath),
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+            "--partitions",
+            "32",
+            "64",
+            "128",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    bindValues = extractFlagValues(command, "--bind")
+    runnerDir = str(runnerPath.parent)
+    assert f"{runnerDir}:{runnerDir}" in bindValues
+
+    executionEnv = captured["env"]  # type: ignore[assignment]
+    assert isinstance(executionEnv, dict)
+    pathValue = executionEnv["PATH"]  # type: ignore[index]
+    assert pathValue.startswith(f"{runnerDir}:/cemdb/.kub-cli/shims:")
+
+
+def testSimulateSlurmProfileDefaultsToHostWorkdirAndHostBind(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    runnerPath = tmp_path / "opt" / "apptainer" / "latest" / "bin" / "apptainer"
+    runnerPath.parent.mkdir(parents=True)
+    runnerPath.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    runnerPath.chmod(0o755)
+
+    imagePath = tmp_path / "kub.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setattr("kub_cli.commands.findExecutable", lambda _: None)
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check=False, env=None, capture_output=False, text=False):  # type: ignore[no-untyped-def]
+        if len(command) >= 3 and command[1] == "inspect" and command[2] == "--list-apps":
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="kub-simulate\nkub-dataset\nkub-dashboard\n",
+                stderr="",
+            )
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "apptainer",
+            "--runner",
+            str(runnerPath),
+            "--image",
+            str(imagePath),
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+            "--partitions",
+            "32",
+            "64",
+            "128",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    bindValues = extractFlagValues(command, "--bind")
+    assert f"{tmp_path}:{tmp_path}" in bindValues
+    pwdValues = extractFlagValues(command, "--pwd")
+    assert str(tmp_path) in pwdValues
+
+
+def testExposeHostSlurmSupportFilesIncludesIdentityFiles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    slurmLibDir = tmp_path / "lib-slurm"
+    slurmCfgDir = tmp_path / "etc-slurm"
+    passwdFile = tmp_path / "passwd"
+    groupFile = tmp_path / "group"
+    nsswitchFile = tmp_path / "nsswitch.conf"
+    mungeDir = tmp_path / "run-munge"
+
+    slurmLibDir.mkdir()
+    slurmCfgDir.mkdir()
+    mungeDir.mkdir()
+    passwdFile.write_text("root:x:0:0:root:/root:/bin/sh\n", encoding="utf-8")
+    groupFile.write_text("root:x:0:\n", encoding="utf-8")
+    nsswitchFile.write_text("passwd: files\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "kub_cli.commands.SLURM_LIBRARY_DIR_CANDIDATES",
+        (slurmLibDir,),
+    )
+    monkeypatch.setattr(
+        "kub_cli.commands.SLURM_CONFIG_DIR_CANDIDATES",
+        (slurmCfgDir,),
+    )
+    monkeypatch.setattr(
+        "kub_cli.commands.SLURM_IDENTITY_FILE_CANDIDATES",
+        (passwdFile, groupFile, nsswitchFile),
+    )
+    monkeypatch.setattr(
+        "kub_cli.commands.SLURM_MUNGE_PATH_CANDIDATES",
+        (mungeDir,),
+    )
+
+    bindSpecs: list[str] = []
+    exposeHostSlurmSupportFiles(bindSpecs=bindSpecs)
+
+    assert f"{slurmLibDir}:{slurmLibDir}" in bindSpecs
+    assert f"{slurmCfgDir}:{slurmCfgDir}" in bindSpecs
+    assert f"{passwdFile}:{passwdFile}" in bindSpecs
+    assert f"{groupFile}:{groupFile}" in bindSpecs
+    assert f"{nsswitchFile}:{nsswitchFile}" in bindSpecs
+    assert f"{mungeDir}:{mungeDir}" in bindSpecs

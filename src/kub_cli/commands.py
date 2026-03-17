@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
+import os
 from pathlib import Path
+import shutil
 from typing import Any, Mapping, Sequence
 
 from .config import KubConfig, KubConfigOverrides, loadKubConfig
@@ -29,6 +31,36 @@ HOME_ENV = "HOME"
 HOME_CONTAINER_ROOT = CEMDB_CONTAINER_ROOT
 KUB_CONFIG_ENV = "KUB_CONFIG"
 KUB_CONFIG_CONTAINER_PATH = "/cemdb/.kub/config.toml"
+SIMULATE_APP_NAME = "kub-simulate"
+SIMULATE_CONFIG_OPTION = "--config"
+SIMULATE_CONFIG_CONTAINER_PATH = "/cemdb/.kub-simulate.toml"
+SIMULATE_HOST_CONFIG_FILENAME = ".kub-simulate.toml"
+SLURM_SHIMS_CONTAINER_DIR = "/cemdb/.kub-cli/shims"
+SLURM_HOST_BRIDGE_CONTAINER_DIR = "/cemdb/.kub-cli/host-bin"
+SLURM_SHIM_COMMANDS = ("sbatch", "srun")
+SIMULATE_PREPROCESS_COMMAND = "preprocess"
+DEFAULT_CONTAINER_PATH = (
+    "/opt/kub-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+)
+SLURM_LIBRARY_DIR_CANDIDATES = (
+    Path("/usr/lib/x86_64-linux-gnu/slurm-wlm"),
+    Path("/usr/lib64/slurm"),
+    Path("/usr/lib/slurm"),
+)
+SLURM_CONFIG_DIR_CANDIDATES = (
+    Path("/etc/slurm"),
+    Path("/etc/slurm-llnl"),
+)
+SLURM_IDENTITY_FILE_CANDIDATES = (
+    Path("/etc/passwd"),
+    Path("/etc/group"),
+    Path("/etc/nsswitch.conf"),
+)
+SLURM_MUNGE_PATH_CANDIDATES = (
+    Path("/run/munge"),
+    Path("/var/run/munge"),
+    Path("/etc/munge"),
+)
 
 
 @dataclass(frozen=True)
@@ -60,12 +92,32 @@ def runWrapperCommand(
 ) -> int:
     """Resolve config and execute one wrapped in-container app."""
 
+    initialConfig = resolveEffectiveConfig(
+        options=options,
+        cwd=cwd,
+        env=env,
+        userConfigPath=userConfigPath,
+    )
+
+    hasExplicitSimulateConfig = (
+        appName == SIMULATE_APP_NAME
+        and hasForwardedOption(forwardedArgs, SIMULATE_CONFIG_OPTION)
+    )
+
     hasUserForwardedArgs = bool(forwardedArgs)
-    preparedOptions, preparedForwardedArgs = prepareCemdbContext(
+    preparedOptions, preparedForwardedArgs, hostCemdbRoot = prepareCemdbContext(
+        appName=appName,
         options=options,
         forwardedArgs=forwardedArgs,
         cwd=cwd,
+        configHint=initialConfig,
     )
+
+    if appName == SIMULATE_APP_NAME and not hasExplicitSimulateConfig:
+        syncSimulateConfigProjection(
+            hostCemdbRoot=Path(hostCemdbRoot),
+            mirrorToNested=False,
+        )
 
     effectiveConfig = resolveEffectiveConfig(
         options=preparedOptions,
@@ -82,11 +134,19 @@ def runWrapperCommand(
             return 0
 
     runner = KubAppRunner(config=effectiveConfig)
-    return runner.run(
+    exitCode = runner.run(
         appName=appName,
         forwardedArgs=preparedForwardedArgs,
         dryRun=options.dryRun,
     )
+
+    if appName == SIMULATE_APP_NAME and not hasExplicitSimulateConfig:
+        syncSimulateConfigProjection(
+            hostCemdbRoot=Path(hostCemdbRoot),
+            mirrorToNested=True,
+        )
+
+    return exitCode
 
 
 def pullSelectedRuntimeImage(
@@ -186,10 +246,12 @@ def parseEnvAssignments(assignments: Sequence[str]) -> dict[str, str]:
 
 def prepareCemdbContext(
     *,
+    appName: str,
     options: WrapperOptions,
     forwardedArgs: Sequence[str],
     cwd: Path | None,
-) -> tuple[WrapperOptions, list[str]]:
+    configHint: KubConfig | None = None,
+) -> tuple[WrapperOptions, list[str], str]:
     runtimeCwd = (cwd or Path.cwd()).resolve()
     rewrittenArgs, forwardedCemdbRoot = rewriteForwardedCemdbArgs(forwardedArgs)
 
@@ -201,24 +263,81 @@ def prepareCemdbContext(
         selectedHostCemdb = str(runtimeCwd)
 
     hostCemdbRoot = resolveCemdbHostRoot(selectedHostCemdb, cwd=runtimeCwd)
+    rewrittenArgs = withDefaultSimulateConfig(
+        appName=appName,
+        forwardedArgs=rewrittenArgs,
+    )
     ensureHostKubConfigDirectory(Path(hostCemdbRoot))
 
     updatedBinds = list(options.binds)
+    useHostPathSlurmContext = shouldUseHostPathForSimulateSlurm(
+        appName=appName,
+        forwardedArgs=rewrittenArgs,
+    )
+    if useHostPathSlurmContext:
+        addBindIfMissing(
+            updatedBinds,
+            source=str(runtimeCwd),
+            destination=str(runtimeCwd),
+        )
     if not hasCemdbBind(updatedBinds):
         updatedBinds.append(f"{hostCemdbRoot}:{CEMDB_CONTAINER_ROOT}")
 
     updatedEnvVars = list(options.envVars)
     ensureEnvAssignment(updatedEnvVars, HOME_ENV, HOME_CONTAINER_ROOT)
     ensureEnvAssignment(updatedEnvVars, KUB_CONFIG_ENV, KUB_CONFIG_CONTAINER_PATH)
+    if appName == SIMULATE_APP_NAME:
+        if ensureHostSlurmBridge(hostCemdbRoot=Path(hostCemdbRoot)):
+            prependPathEnvAssignment(updatedEnvVars, SLURM_HOST_BRIDGE_CONTAINER_DIR)
+            exposeHostSlurmSupportFiles(bindSpecs=updatedBinds)
+        elif shouldAddSlurmCompatibilityShims(
+            appName=appName,
+            forwardedArgs=rewrittenArgs,
+        ):
+            ensureSlurmCompatibilityShims(hostCemdbRoot=Path(hostCemdbRoot))
+            prependPathEnvAssignment(updatedEnvVars, SLURM_SHIMS_CONTAINER_DIR)
+        if shouldExposeInnerApptainerExecutable(
+            appName=appName,
+            forwardedArgs=rewrittenArgs,
+        ):
+            ensureInnerApptainerExecutableVisibility(
+                bindSpecs=updatedBinds,
+                envAssignments=updatedEnvVars,
+                hostCemdbRoot=Path(hostCemdbRoot),
+                configHint=configHint,
+            )
 
-    resolvedWorkdir = options.pwd if options.pwd is not None else CEMDB_CONTAINER_ROOT
+    if options.pwd is not None:
+        resolvedWorkdir = options.pwd
+    elif useHostPathSlurmContext:
+        resolvedWorkdir = str(runtimeCwd)
+    else:
+        resolvedWorkdir = CEMDB_CONTAINER_ROOT
 
     return replace(
         options,
         binds=tuple(updatedBinds),
         envVars=tuple(updatedEnvVars),
         pwd=resolvedWorkdir,
-    ), rewrittenArgs
+    ), rewrittenArgs, hostCemdbRoot
+
+
+def withDefaultSimulateConfig(
+    *,
+    appName: str,
+    forwardedArgs: list[str],
+) -> list[str]:
+    if appName != SIMULATE_APP_NAME:
+        return forwardedArgs
+
+    if hasForwardedOption(forwardedArgs, SIMULATE_CONFIG_OPTION):
+        return forwardedArgs
+
+    return [
+        SIMULATE_CONFIG_OPTION,
+        SIMULATE_CONFIG_CONTAINER_PATH,
+        *forwardedArgs,
+    ]
 
 
 def rewriteForwardedCemdbArgs(forwardedArgs: Sequence[str]) -> tuple[list[str], str | None]:
@@ -263,6 +382,344 @@ def rewriteForwardedCemdbArgs(forwardedArgs: Sequence[str]) -> tuple[list[str], 
         index += 1
 
     return rewritten, hostCemdbRoot
+
+
+def hasForwardedOption(forwardedArgs: Sequence[str], optionName: str) -> bool:
+    return any(
+        token == optionName or token.startswith(f"{optionName}=")
+        for token in forwardedArgs
+    )
+
+
+def shouldAddSlurmCompatibilityShims(
+    *,
+    appName: str,
+    forwardedArgs: Sequence[str],
+) -> bool:
+    if appName != SIMULATE_APP_NAME:
+        return False
+
+    if hasForwardedOption(forwardedArgs, "--dry-run"):
+        return True
+
+    return detectSimulateSubcommand(forwardedArgs) == SIMULATE_PREPROCESS_COMMAND
+
+
+def detectSimulateSubcommand(forwardedArgs: Sequence[str]) -> str | None:
+    for token in forwardedArgs:
+        if token == SIMULATE_PREPROCESS_COMMAND:
+            return token
+    return None
+
+
+def shouldExposeInnerApptainerExecutable(
+    *,
+    appName: str,
+    forwardedArgs: Sequence[str],
+) -> bool:
+    if appName != SIMULATE_APP_NAME:
+        return False
+
+    runtimeValue = getForwardedOptionValue(forwardedArgs, "--runtime")
+    if runtimeValue is not None and runtimeValue.strip().lower() == "apptainer":
+        return True
+
+    profileValue = getForwardedOptionValue(forwardedArgs, "--profile")
+    return profileValue is not None and "apptainer" in profileValue.lower()
+
+
+def shouldUseHostPathForSimulateSlurm(
+    *,
+    appName: str,
+    forwardedArgs: Sequence[str],
+) -> bool:
+    if appName != SIMULATE_APP_NAME:
+        return False
+
+    launcherValue = getForwardedOptionValue(forwardedArgs, "--launcher")
+    if launcherValue is not None and launcherValue.strip().lower() == "slurm":
+        return True
+
+    profileValue = getForwardedOptionValue(forwardedArgs, "--profile")
+    return profileValue is not None and "slurm" in profileValue.lower()
+
+
+def getForwardedOptionValue(forwardedArgs: Sequence[str], optionName: str) -> str | None:
+    rawArgs = list(forwardedArgs)
+    for index, token in enumerate(rawArgs):
+        if token == optionName:
+            if index + 1 < len(rawArgs):
+                return rawArgs[index + 1]
+            return None
+        if token.startswith(f"{optionName}="):
+            return token.split("=", maxsplit=1)[1]
+    return None
+
+
+def ensureInnerApptainerExecutableVisibility(
+    *,
+    bindSpecs: list[str],
+    envAssignments: list[str],
+    hostCemdbRoot: Path,
+    configHint: KubConfig | None,
+) -> None:
+    executablePath = resolveHostApptainerExecutablePath(configHint=configHint)
+    if executablePath is None:
+        ensureApptainerCompatibilityShim(hostCemdbRoot=hostCemdbRoot)
+        prependPathEnvAssignment(envAssignments, SLURM_SHIMS_CONTAINER_DIR)
+        return
+
+    executableDir = executablePath.parent
+    addBindIfMissing(
+        bindSpecs,
+        source=str(executableDir),
+        destination=str(executableDir),
+    )
+    prependPathEnvAssignment(envAssignments, str(executableDir))
+
+
+def resolveHostApptainerExecutablePath(*, configHint: KubConfig | None) -> Path | None:
+    candidates: list[str] = []
+    if configHint is not None:
+        if configHint.runner is not None and configHint.runner.strip():
+            candidates.append(configHint.runner.strip())
+        if configHint.apptainerRunner.strip():
+            candidates.append(configHint.apptainerRunner.strip())
+
+    discovered = findExecutable("apptainer")
+    if discovered is not None:
+        candidates.append(discovered)
+
+    for value in candidates:
+        candidatePath = Path(value).expanduser()
+        if not candidatePath.is_absolute():
+            continue
+        if candidatePath.exists() and os.access(candidatePath, os.X_OK):
+            return candidatePath.resolve()
+
+    return None
+
+
+def ensureApptainerCompatibilityShim(*, hostCemdbRoot: Path) -> None:
+    shimDir = hostCemdbRoot / ".kub-cli" / "shims"
+    try:
+        shimDir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ConfigError(
+            f"Unable to create shim directory '{shimDir}': {error}"
+        ) from error
+
+    shimPath = shimDir / "apptainer"
+    shimContent = (
+        "#!/bin/sh\n"
+        "echo \"kub-cli shim: apptainer executable not available in container PATH.\" >&2\n"
+        "echo \"Install/bind Apptainer or set --runtime native in kub-simulate profile.\" >&2\n"
+        "exit 127\n"
+    )
+    try:
+        shimPath.write_text(shimContent, encoding="utf-8")
+        shimPath.chmod(0o755)
+    except OSError as error:
+        raise ConfigError(
+            f"Unable to create apptainer shim '{shimPath}': {error}"
+        ) from error
+
+
+def addBindIfMissing(bindSpecs: list[str], *, source: str, destination: str) -> None:
+    for bindSpec in bindSpecs:
+        parts = bindSpec.split(":")
+        if len(parts) < 2:
+            continue
+        if parts[0] == source and parts[1] == destination:
+            return
+    bindSpecs.append(f"{source}:{destination}")
+
+
+def exposeHostSlurmSupportFiles(*, bindSpecs: list[str]) -> None:
+    for directory in SLURM_LIBRARY_DIR_CANDIDATES:
+        if directory.is_dir():
+            addBindIfMissing(
+                bindSpecs,
+                source=str(directory),
+                destination=str(directory),
+            )
+
+    for directory in SLURM_CONFIG_DIR_CANDIDATES:
+        if directory.is_dir():
+            addBindIfMissing(
+                bindSpecs,
+                source=str(directory),
+                destination=str(directory),
+            )
+
+    for filePath in SLURM_IDENTITY_FILE_CANDIDATES:
+        if filePath.is_file():
+            addBindIfMissing(
+                bindSpecs,
+                source=str(filePath),
+                destination=str(filePath),
+            )
+
+    for pathValue in SLURM_MUNGE_PATH_CANDIDATES:
+        if pathValue.is_dir():
+            addBindIfMissing(
+                bindSpecs,
+                source=str(pathValue),
+                destination=str(pathValue),
+            )
+
+
+def ensureHostSlurmBridge(*, hostCemdbRoot: Path) -> bool:
+    hostCommands: dict[str, Path] = {}
+    for commandName in SLURM_SHIM_COMMANDS:
+        resolved = findExecutable(commandName)
+        if resolved is None:
+            return False
+        sourcePath = Path(resolved)
+        if (
+            sourcePath.name != commandName
+            or not sourcePath.exists()
+            or not os.access(sourcePath, os.X_OK)
+        ):
+            return False
+        hostCommands[commandName] = sourcePath
+
+    hostBinDir = hostCemdbRoot / ".kub-cli" / "host-bin"
+    try:
+        hostBinDir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ConfigError(
+            f"Unable to create host slurm bridge directory '{hostBinDir}': {error}"
+        ) from error
+
+    for commandName, sourcePath in hostCommands.items():
+        destination = hostBinDir / commandName
+        if destination.exists():
+            try:
+                if destination.samefile(sourcePath):
+                    destination.chmod(0o755)
+                    continue
+            except OSError:
+                pass
+        try:
+            shutil.copy2(sourcePath, destination)
+            destination.chmod(0o755)
+        except OSError as error:
+            raise ConfigError(
+                f"Unable to prepare host slurm bridge command '{destination}': {error}"
+            ) from error
+
+    return True
+
+
+def findExecutable(commandName: str) -> str | None:
+    return shutil.which(commandName)
+
+
+def ensureSlurmCompatibilityShims(*, hostCemdbRoot: Path) -> None:
+    shimDir = hostCemdbRoot / ".kub-cli" / "shims"
+    try:
+        shimDir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ConfigError(
+            f"Unable to create slurm shim directory '{shimDir}': {error}"
+        ) from error
+
+    shimContent = "#!/bin/sh\nexit 0\n"
+    for commandName in SLURM_SHIM_COMMANDS:
+        shimPath = shimDir / commandName
+        try:
+            shimPath.write_text(shimContent, encoding="utf-8")
+            shimPath.chmod(0o755)
+        except OSError as error:
+            raise ConfigError(
+                f"Unable to create slurm shim '{shimPath}': {error}"
+            ) from error
+
+
+def prependPathEnvAssignment(assignments: list[str], prefixPath: str) -> None:
+    existingPath = getEnvAssignmentValue(assignments, "PATH")
+    if existingPath is not None:
+        if existingPath == prefixPath or existingPath.startswith(f"{prefixPath}:"):
+            return
+        setEnvAssignmentValue(assignments, "PATH", f"{prefixPath}:{existingPath}")
+        return
+
+    setEnvAssignmentValue(assignments, "PATH", f"{prefixPath}:{DEFAULT_CONTAINER_PATH}")
+
+
+def getEnvAssignmentValue(assignments: Sequence[str], key: str) -> str | None:
+    for entry in assignments:
+        if "=" not in entry:
+            continue
+        entryKey, value = entry.split("=", maxsplit=1)
+        if entryKey.strip() == key:
+            return value
+    return None
+
+
+def setEnvAssignmentValue(assignments: list[str], key: str, value: str) -> None:
+    for index, entry in enumerate(assignments):
+        if "=" not in entry:
+            continue
+        entryKey = entry.split("=", maxsplit=1)[0].strip()
+        if entryKey == key:
+            assignments[index] = f"{key}={value}"
+            return
+    assignments.append(f"{key}={value}")
+
+
+def syncSimulateConfigProjection(*, hostCemdbRoot: Path, mirrorToNested: bool) -> None:
+    rootConfig = hostCemdbRoot / SIMULATE_HOST_CONFIG_FILENAME
+    nestedDir = hostCemdbRoot / "cemdb"
+    nestedConfig = nestedDir / SIMULATE_HOST_CONFIG_FILENAME
+
+    if not nestedDir.is_dir():
+        return
+
+    if not rootConfig.exists() and nestedConfig.exists() and not nestedConfig.is_dir():
+        try:
+            shutil.copy2(nestedConfig, rootConfig)
+        except OSError as error:
+            raise ConfigError(
+                f"Unable to initialize {rootConfig} from existing nested config: {error}"
+            ) from error
+
+    if not mirrorToNested:
+        return
+
+    if not rootConfig.exists():
+        return
+
+    if nestedConfig.is_symlink():
+        target = os.readlink(nestedConfig)
+        if target == f"../{SIMULATE_HOST_CONFIG_FILENAME}":
+            return
+        try:
+            nestedConfig.unlink()
+        except OSError as error:
+            raise ConfigError(
+                f"Unable to update nested kub-simulate config symlink '{nestedConfig}': {error}"
+            ) from error
+
+    if not nestedConfig.exists():
+        try:
+            nestedConfig.symlink_to(Path("..") / SIMULATE_HOST_CONFIG_FILENAME)
+            return
+        except OSError:
+            pass
+
+    if nestedConfig.is_dir():
+        raise ConfigError(
+            f"Nested kub-simulate config path is a directory: '{nestedConfig}'."
+        )
+
+    try:
+        shutil.copy2(rootConfig, nestedConfig)
+    except OSError as error:
+        raise ConfigError(
+            f"Unable to mirror kub-simulate config to '{nestedConfig}': {error}"
+        ) from error
 
 
 def resolveCemdbHostRoot(rawValue: str, *, cwd: Path) -> str:

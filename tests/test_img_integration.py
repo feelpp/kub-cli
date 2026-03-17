@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -44,6 +45,55 @@ def testBuildPullRequestUsesExplicitApptainerOrasSource() -> None:
 
     assert request.runtime == "apptainer"
     assert request.image == "/tmp/kub.sif"
+    assert request.source == "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif"
+
+
+def testBuildPullRequestFallsBackToDefaultApptainerImagePath(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = KubConfig(runtime="apptainer")
+
+    request = buildKubImgPullRequest(config)
+
+    assert request.runtime == "apptainer"
+    assert request.source == "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif"
+    assert request.image == str((tmp_path / "kub-master.sif").resolve())
+
+
+def testBuildPullRequestAutoPrefersApptainerWhenAvailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "apptainer":
+            return "/usr/bin/apptainer"
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    request = buildKubImgPullRequest(KubConfig(runtime="auto"))
+
+    assert request.runtime == "apptainer"
+    assert request.source == "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif"
+    assert request.image == str((tmp_path / "kub-master.sif").resolve())
+
+
+def testBuildPullRequestIgnoresLocalImageOverrideForSourceDerivation() -> None:
+    config = KubConfig(
+        runtime="apptainer",
+        imageOverride="/tmp/custom.sif",
+    )
+
+    request = buildKubImgPullRequest(config)
+
+    assert request.runtime == "apptainer"
+    assert request.image == "/tmp/custom.sif"
     assert request.source == "oras://ghcr.io/feelpp/ktirio-urban-building:master-sif"
 
 
