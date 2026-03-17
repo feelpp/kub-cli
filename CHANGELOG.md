@@ -9,6 +9,14 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## 0.11.0 - 2026-03-17
+- Added `gh release create vX.Y.Z --generate-notes --title "vX.Y.Z"` guidance to `kub-cli bump` output
+
+## 0.10.0 - 2026-03-17
+- Added release tag guidance to `kub-cli bump` output:
+  - `git tag vX.Y.Z`
+  - `git push origin vX.Y.Z`
+
 ## 0.9.0 - 2026-03-17
 - Added `kub-cli bump` command for SemVer version updates in `pyproject.toml` and fallback package version
 - Added GitHub Actions workflow for PyPI publishing via GitHub environment `pypi` (`.github/workflows/publish.yml`)

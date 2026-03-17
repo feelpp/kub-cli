@@ -274,6 +274,9 @@ def createMetaApp() -> typer.Typer:
                 typer.echo("Release tag commands:")
             typer.echo(f"git tag {releaseTag}")
             typer.echo(f"git push origin {releaseTag}")
+            typer.echo(
+                f'gh release create {releaseTag} --generate-notes --title "{releaseTag}"'
+            )
 
     return app
 
