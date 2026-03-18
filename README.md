@@ -56,6 +56,23 @@ uv pip install .
 uv pip install -e .[dev]
 ```
 
+## Shell Completion
+
+Generate shell completion for `kub-cli`, `kub-dataset`, `kub-simulate`,
+`kub-dashboard`, and `kub-img`:
+
+```bash
+kub-cli generate-shell-completion bash
+kub-cli generate-shell-completion zsh
+kub-cli generate-shell-completion fish
+```
+
+For Bash in `~/.bashrc` (same style as `uv`):
+
+```bash
+eval "$(kub-cli generate-shell-completion bash)"
+```
+
 ## Quick start
 
 Set runtime and images:
@@ -196,6 +213,7 @@ Subcommands:
 
 - `kub-img pull [SOURCE] [--runtime ...] [--image ...]`
 - `kub-img info [--runtime ...] [--image ...] [--json]`
+- `kub-img login [--runtime ...]`
 - `kub-img apps` (Apptainer runtime)
 - `kub-img path`
 
@@ -206,6 +224,10 @@ Default behavior:
 - If no local Apptainer destination is configured, kub-cli uses
   `./kub-master.sif` in the current directory
 - `--runtime auto` prefers Apptainer when available in `PATH`, then Docker
+- Use `kub-img login` for GHCR authentication.
+  It defaults to `--runtime auto` and prompts for GHCR username if `--username` is not provided.
+  If `--password` or `--token` is provided, kub-img forwards it through stdin (`--password-stdin`).
+  Otherwise password/token is prompted by the runtime command. Use a GitHub PAT with package read access.
 
 Examples:
 
@@ -224,6 +246,12 @@ kub-img pull --runtime apptainer
 # Runtime-aware image info
 kub-img info --runtime docker --image ghcr.io/feelpp/ktirio-urban-building:master --json
 kub-img info --runtime apptainer --image ./ktirio-urban-building.sif
+
+# Runtime-aware registry login (GHCR)
+kub-img login
+kub-img login --runtime apptainer
+kub-img login --runtime docker
+kub-img login --username <github-user> --token "$GITHUB_TOKEN"
 ```
 
 ## Configuration

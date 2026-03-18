@@ -257,3 +257,384 @@ def testAppsAutoRejectsWhenRuntimeResolvesToDocker(
 
     assert result.exit_code == 2
     assert "only available with Apptainer runtime" in result.output
+
+
+def testApptainerLoginBuildsRegistryCommand(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+
+    captured: dict[str, object] = {}
+
+    def fakeRunCommand(  # type: ignore[no-untyped-def]
+        self,
+        command,
+        captureOutput,
+        dryRun,
+        runtimeConfig=None,
+        inputText=None,
+    ):
+        captured["command"] = command
+        captured["inputText"] = inputText
+        return 0
+
+    monkeypatch.setattr(KubImgManager, "runCommand", fakeRunCommand)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--runtime",
+            "apptainer",
+            "--username",
+            "alice",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == [
+        "/usr/bin/apptainer",
+        "registry",
+        "login",
+        "--username",
+        "alice",
+        "docker://ghcr.io",
+    ]
+    assert captured["inputText"] is None
+    assert "Using Apptainer registry login for GHCR" in result.output
+    assert "runtime will prompt for password/token" in result.output
+
+
+def testDockerLoginBuildsLoginCommand(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRunCommand(  # type: ignore[no-untyped-def]
+        self,
+        command,
+        captureOutput,
+        dryRun,
+        runtimeConfig=None,
+        inputText=None,
+    ):
+        captured["command"] = command
+        captured["inputText"] = inputText
+        return 0
+
+    monkeypatch.setattr(KubImgManager, "runCommand", fakeRunCommand)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--runtime",
+            "docker",
+            "--username",
+            "alice",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == ["/usr/bin/docker", "login", "-u", "alice", "ghcr.io"]
+    assert captured["inputText"] is None
+    assert "Using Docker login for GHCR" in result.output
+    assert "runtime will prompt for password/token" in result.output
+
+
+def testLoginDefaultsToAutoAndFallsBackToDockerWhenApptainerUnavailable(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fakeWhich(name: str) -> str | None:
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    captured: dict[str, object] = {}
+
+    def fakeRunCommand(  # type: ignore[no-untyped-def]
+        self,
+        command,
+        captureOutput,
+        dryRun,
+        runtimeConfig=None,
+        inputText=None,
+    ):
+        captured["command"] = command
+        captured["inputText"] = inputText
+        return 0
+
+    monkeypatch.setattr(KubImgManager, "runCommand", fakeRunCommand)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--username",
+            "alice",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == ["/usr/bin/docker", "login", "-u", "alice", "ghcr.io"]
+    assert captured["inputText"] is None
+
+
+def testLoginDefaultsToAutoAndPrefersApptainerWhenAvailable(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fakeWhich(name: str) -> str | None:
+        if name == "apptainer":
+            return "/usr/bin/apptainer"
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+
+    captured: dict[str, object] = {}
+
+    def fakeRunCommand(  # type: ignore[no-untyped-def]
+        self,
+        command,
+        captureOutput,
+        dryRun,
+        runtimeConfig=None,
+        inputText=None,
+    ):
+        captured["command"] = command
+        captured["inputText"] = inputText
+        return 0
+
+    monkeypatch.setattr(KubImgManager, "runCommand", fakeRunCommand)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--username",
+            "alice",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == [
+        "/usr/bin/apptainer",
+        "registry",
+        "login",
+        "--username",
+        "alice",
+        "docker://ghcr.io",
+    ]
+    assert captured["inputText"] is None
+
+
+def testLoginAutoWithExplicitDockerRunnerUsesDockerLogin(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runnerPath = tmp_path / "docker"
+    runnerPath.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    runnerPath.chmod(0o755)
+
+    captured: dict[str, object] = {}
+
+    def fakeRunCommand(  # type: ignore[no-untyped-def]
+        self,
+        command,
+        captureOutput,
+        dryRun,
+        runtimeConfig=None,
+        inputText=None,
+    ):
+        captured["command"] = command
+        captured["inputText"] = inputText
+        return 0
+
+    monkeypatch.setattr(KubImgManager, "runCommand", fakeRunCommand)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--runtime",
+            "auto",
+            "--runner",
+            str(runnerPath),
+            "--username",
+            "alice",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == [str(runnerPath), "login", "-u", "alice", "ghcr.io"]
+    assert captured["inputText"] is None
+    assert "Using Docker login for GHCR" in result.output
+
+
+def testLoginAutoWithAmbiguousRunnerRequiresExplicitRuntime(
+    cliRunner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    runnerPath = tmp_path / "runtime-wrapper"
+    runnerPath.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    runnerPath.chmod(0o755)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--runtime",
+            "auto",
+            "--runner",
+            str(runnerPath),
+            "--username",
+            "alice",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Unable to infer runtime from --runner" in result.output
+
+
+def testLoginPromptsForUsernameWhenMissing(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRunCommand(  # type: ignore[no-untyped-def]
+        self,
+        command,
+        captureOutput,
+        dryRun,
+        runtimeConfig=None,
+        inputText=None,
+    ):
+        captured["command"] = command
+        captured["inputText"] = inputText
+        return 0
+
+    monkeypatch.setattr(KubImgManager, "runCommand", fakeRunCommand)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--runtime",
+            "docker",
+        ],
+        input="alice\n",
+    )
+
+    assert result.exit_code == 0
+    assert "GHCR username" in result.output
+    assert captured["command"] == ["/usr/bin/docker", "login", "-u", "alice", "ghcr.io"]
+    assert captured["inputText"] is None
+
+
+def testDockerLoginWithTokenUsesPasswordStdin(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    captured: dict[str, object] = {}
+
+    def fakeRunCommand(  # type: ignore[no-untyped-def]
+        self,
+        command,
+        captureOutput,
+        dryRun,
+        runtimeConfig=None,
+        inputText=None,
+    ):
+        captured["command"] = command
+        captured["inputText"] = inputText
+        return 0
+
+    monkeypatch.setattr(KubImgManager, "runCommand", fakeRunCommand)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--runtime",
+            "docker",
+            "--username",
+            "alice",
+            "--token",
+            "secret-token",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == [
+        "/usr/bin/docker",
+        "login",
+        "-u",
+        "alice",
+        "--password-stdin",
+        "ghcr.io",
+    ]
+    assert captured["inputText"] == "secret-token\n"
+    assert "sent via stdin" in result.output
+
+
+def testApptainerLoginWithPasswordUsesPasswordStdin(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+
+    captured: dict[str, object] = {}
+
+    def fakeRunCommand(  # type: ignore[no-untyped-def]
+        self,
+        command,
+        captureOutput,
+        dryRun,
+        runtimeConfig=None,
+        inputText=None,
+    ):
+        captured["command"] = command
+        captured["inputText"] = inputText
+        return 0
+
+    monkeypatch.setattr(KubImgManager, "runCommand", fakeRunCommand)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "login",
+            "--runtime",
+            "apptainer",
+            "--username",
+            "alice",
+            "--password",
+            "secret-token",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == [
+        "/usr/bin/apptainer",
+        "registry",
+        "login",
+        "--username",
+        "alice",
+        "--password-stdin",
+        "docker://ghcr.io",
+    ]
+    assert captured["inputText"] == "secret-token\n"

@@ -210,6 +210,81 @@ def infoCommand(
     raise typer.Exit(code=exitCode)
 
 
+@imgApp.command("login")
+def loginCommand(
+    runtime: str | None = typer.Option(
+        "auto",
+        "--runtime",
+        metavar="{auto,apptainer,docker}",
+        help="Container runtime selection for GHCR login (default: auto-detect).",
+    ),
+    runner: str | None = typer.Option(
+        None,
+        "--runner",
+        metavar="PATH",
+        help="Runtime executable path or command name.",
+    ),
+    username: str | None = typer.Option(
+        None,
+        "--username",
+        "-u",
+        metavar="USER",
+        help="GHCR username. If omitted, kub-img prompts interactively.",
+    ),
+    passwordToken: str | None = typer.Option(
+        None,
+        "--password",
+        "--token",
+        metavar="SECRET",
+        help=(
+            "GHCR password/token. "
+            "Forwarded securely through stdin (--password-stdin) to the runtime."
+        ),
+    ),
+    dryRun: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the login command without executing it.",
+    ),
+    verbose: bool | None = typer.Option(
+        None,
+        "--verbose/--no-verbose",
+        help="Enable or disable verbose logging.",
+    ),
+    showConfig: bool = typer.Option(
+        False,
+        "--show-config",
+        help="Print effective kub-cli configuration as JSON.",
+    ),
+) -> None:
+    try:
+        manager = buildImgManager(
+            runtime=runtime,
+            image=None,
+            runner=runner,
+            verbose=verbose,
+            showConfig=showConfig,
+        )
+        runtimeConfig = manager.configWithRuntime(runtime)
+        resolvedRuntime = manager.resolveRuntimeForLogin(runtimeConfig)
+
+        normalizedUsername = username.strip() if username is not None else ""
+        if not normalizedUsername:
+            normalizedUsername = typer.prompt("GHCR username")
+
+        exitCode = manager.loginToRegistry(
+            runtime=resolvedRuntime,
+            runtimeConfig=runtimeConfig,
+            username=normalizedUsername,
+            passwordToken=passwordToken,
+            dryRun=dryRun,
+        )
+    except KubCliError as error:
+        exitOnError(error)
+
+    raise typer.Exit(code=exitCode)
+
+
 @imgApp.command("apps")
 def appsCommand(
     runtime: str | None = typer.Option(

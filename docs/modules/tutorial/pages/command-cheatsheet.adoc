@@ -31,6 +31,7 @@ kub-dataset --cemdb-root {tutorial_cemdb_root} summary {tutorial_location}
 
 [source,bash,subs=attributes+]
 ----
+kub-img login
 kub-img pull --runtime apptainer --image ./kub-master.sif {tutorial_kub_apptainer_image_ref}
 kub-img info --runtime apptainer --image ./kub-master.sif --json
 kub-img path --runtime apptainer --image ./kub-master.sif

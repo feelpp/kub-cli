@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
-from typing import Any, Mapping, Sequence
+from typing import Any, ClassVar, Mapping, Sequence
 
 from .config import KubConfig, KubConfigOverrides, SUPPORTED_RUNTIMES, loadKubConfig
 from .errors import ImageNotFoundError, KubCliError
@@ -22,7 +22,7 @@ from .img_integration import (
     buildKubImgPullRequest,
 )
 from .logging_utils import LOGGER, formatCommand
-from .runtime import getRunnerValue, resolveRunnerExecutable
+from .runtime import getRunnerValue, resolveRunnerExecutable, tryResolveRunnerExecutable
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,24 @@ class KubImgManager:
     """Execute runtime-specific image operations using resolved kub-cli config."""
 
     config: KubConfig
+
+    GHCR_HOST: ClassVar[str] = "ghcr.io"
+    GHCR_DOCKER_URI: ClassVar[str] = "docker://ghcr.io"
+    LOGIN_COMMAND_TEMPLATES: ClassVar[dict[str, tuple[str, ...]]] = {
+        "apptainer": (
+            "registry",
+            "login",
+            "--username",
+            "{username}",
+            "{password_stdin_flag}",
+            GHCR_DOCKER_URI,
+        ),
+        "docker": ("login", "-u", "{username}", "{password_stdin_flag}", GHCR_HOST),
+    }
+    LOGIN_GUIDANCE_BY_RUNTIME: ClassVar[dict[str, str]] = {
+        "apptainer": "Using Apptainer registry login for GHCR (ghcr.io).",
+        "docker": "Using Docker login for GHCR (ghcr.io).",
+    }
 
     def resolveRuntime(self, runtime: str | None) -> str:
         if runtime is None:
@@ -86,6 +104,151 @@ class KubImgManager:
             dockerFlags=dockerFlags,
             dryRun=dryRun,
         )
+
+    def loginToRegistry(
+        self,
+        *,
+        runtime: str,
+        runtimeConfig: KubConfig,
+        username: str,
+        passwordToken: str | None,
+        dryRun: bool,
+    ) -> int:
+        normalizedRuntime = runtime.strip().lower()
+        if normalizedRuntime not in {"apptainer", "docker"}:
+            raise KubCliError(
+                "Internal error: login runtime must be either 'apptainer' or 'docker'."
+            )
+
+        effectiveRuntimeConfig = replace(runtimeConfig, runtime=normalizedRuntime)
+
+        self.printRegistryLoginGuidance(
+            normalizedRuntime,
+            usernameProvided=bool(username.strip()),
+            passwordProvided=passwordToken is not None,
+        )
+
+        command, inputText = self.buildRegistryLoginCommand(
+            runtime=normalizedRuntime,
+            runtimeConfig=effectiveRuntimeConfig,
+            username=username,
+            passwordToken=passwordToken,
+        )
+        return self.runCommand(
+            command,
+            captureOutput=False,
+            dryRun=dryRun,
+            inputText=inputText,
+        )
+
+    def resolveRuntimeForLogin(self, runtimeConfig: KubConfig) -> str:
+        normalized = runtimeConfig.runtime.strip().lower()
+        if normalized in {"apptainer", "docker"}:
+            return normalized
+
+        if runtimeConfig.runner is not None and runtimeConfig.runner.strip():
+            return inferRuntimeFromRunnerForLogin(runtimeConfig.runner)
+
+        apptainerRunnerValue = runtimeConfig.apptainerRunner.strip()
+        if tryResolveRunnerExecutable(apptainerRunnerValue) is not None:
+            return "apptainer"
+
+        dockerRunnerValue = runtimeConfig.dockerRunner.strip()
+        if tryResolveRunnerExecutable(dockerRunnerValue) is not None:
+            return "docker"
+
+        raise KubCliError(
+            "Unable to resolve runtime in auto mode for kub-img login. "
+            "Install Apptainer (https://apptainer.org/docs/admin/main/installation.html) "
+            "or Docker Engine (https://docs.docker.com/engine/install/), "
+            "or pass --runtime explicitly."
+        )
+
+    def printRegistryLoginGuidance(
+        self,
+        runtime: str,
+        *,
+        usernameProvided: bool,
+        passwordProvided: bool,
+    ) -> None:
+        guidance = self.LOGIN_GUIDANCE_BY_RUNTIME.get(runtime)
+        if guidance is None:
+            raise KubCliError(
+                f"Internal error: unsupported runtime '{runtime}' for login."
+            )
+
+        print(guidance)
+        if usernameProvided and passwordProvided:
+            print(
+                "Using provided username and password/token. "
+                "The password/token is sent via stdin."
+            )
+            return
+
+        if usernameProvided and not passwordProvided:
+            print(
+                "Using provided username. "
+                "The runtime will prompt for password/token."
+            )
+            return
+
+        if not usernameProvided and passwordProvided:
+            print(
+                "The password/token is provided via stdin. "
+                "kub-img will prompt for your GHCR username."
+            )
+            return
+
+        print(
+            "kub-img will prompt for GHCR username, then the runtime "
+            "will prompt for password/token."
+        )
+
+    def buildRegistryLoginCommand(
+        self,
+        *,
+        runtime: str,
+        runtimeConfig: KubConfig,
+        username: str,
+        passwordToken: str | None,
+    ) -> tuple[list[str], str | None]:
+        commandTemplate = self.LOGIN_COMMAND_TEMPLATES.get(runtime)
+        if commandTemplate is None:
+            raise KubCliError(
+                f"Internal error: unsupported runtime '{runtime}' for login."
+            )
+
+        normalizedUsername = username.strip()
+        if not normalizedUsername:
+            raise KubCliError(
+                "GHCR username cannot be empty. Pass --username or provide a prompt value."
+            )
+
+        stdinText: str | None = None
+        passwordStdinFlag = ""
+        if passwordToken is not None:
+            if passwordToken == "":
+                raise KubCliError(
+                    "Password/token cannot be empty when --password/--token is provided."
+                )
+            passwordStdinFlag = "--password-stdin"
+            stdinText = (
+                passwordToken
+                if passwordToken.endswith("\n")
+                else f"{passwordToken}\n"
+            )
+
+        runner = self.resolveRunner(runtime, runtimeConfig)
+        commandArgs: list[str] = []
+        for templateArg in commandTemplate:
+            formattedArg = templateArg.format(
+                username=normalizedUsername,
+                password_stdin_flag=passwordStdinFlag,
+            )
+            if not formattedArg:
+                continue
+            commandArgs.append(formattedArg)
+        return [runner, *commandArgs], stdinText
 
     def pullApptainerImage(
         self,
@@ -351,6 +514,7 @@ class KubImgManager:
         captureOutput: bool,
         dryRun: bool,
         runtimeConfig: KubConfig | None = None,
+        inputText: str | None = None,
     ) -> int | subprocess.CompletedProcess[str]:
         if self.config.verbose or (runtimeConfig is not None and runtimeConfig.verbose):
             LOGGER.debug("Resolved command: %s", formatCommand(command))
@@ -366,6 +530,10 @@ class KubImgManager:
             }
         else:
             runKwargs = {}
+
+        if inputText is not None:
+            runKwargs["input"] = inputText
+            runKwargs["text"] = True
 
         try:
             return subprocess.run(
@@ -416,3 +584,23 @@ def parseLabelOutput(rawText: str) -> dict[str, str]:
         labels[key.strip()] = value.strip()
 
     return labels
+
+
+def inferRuntimeFromRunnerForLogin(runnerValue: str) -> str:
+    runnerPath = tryResolveRunnerExecutable(runnerValue)
+    if runnerPath is None:
+        raise KubCliError(
+            f"Unable to resolve runner '{runnerValue}' in auto mode for kub-img login. "
+            "Pass --runtime explicitly or provide a valid executable path/name."
+        )
+
+    runnerName = Path(runnerPath).name.strip().lower()
+    if "apptainer" in runnerName or "singularity" in runnerName:
+        return "apptainer"
+    if "docker" in runnerName:
+        return "docker"
+
+    raise KubCliError(
+        "Unable to infer runtime from --runner in auto mode for kub-img login. "
+        "Pass --runtime apptainer or --runtime docker explicitly."
+    )

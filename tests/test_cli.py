@@ -12,7 +12,14 @@ import pytest
 from typer.testing import CliRunner
 
 from kub_cli.cli import dashboardApp, datasetApp, simulateApp
-from kub_cli.wrapper_context import exposeHostSlurmSupportFiles
+from kub_cli.wrapper_context import (
+    ensureAutoMpiExecutionEnv,
+    ensureSlurmAccountingEnv,
+    exposeHostSlurmSupportFiles,
+    resolveTargetSlurmPartition,
+    selectClosestOpenMpiModule,
+    selectAssociationForPartition,
+)
 
 
 @pytest.fixture
@@ -120,6 +127,34 @@ def testForwardingArgsWithoutDoubleDashDocker(
     assert "KUB_CONFIG=/cemdb/.kub/config.toml" in envValues
     workdirValues = extractFlagValues(command, "--workdir")
     assert "/cemdb" in workdirValues
+
+
+def testSimulatePreflightFailsEarlyWhenLocalApptainerImageMissing(
+    cliRunner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    fakeRunner = tmp_path / "apptainer"
+    fakeRunner.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fakeRunner.chmod(0o755)
+
+    missingImage = tmp_path / "missing.sif"
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "apptainer",
+            "--runner",
+            str(fakeRunner),
+            "--image",
+            str(missingImage),
+            "status",
+            "arz",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Preflight failed" in result.output
+    assert "Container image not found" in result.output
 
 
 def testBindOptionIsPassedToDockerAsVolume(
@@ -901,6 +936,14 @@ def testSimulateNonDryRunInjectsHostSlurmBridgeWhenAvailable(
     assert len(pathValues) == 1
     assert pathValues[0].startswith("PATH=/cemdb/.kub-cli/shims:")
     assert "/cemdb/.kub-cli/host-bin:" in pathValues[0]
+    assert f"{tmp_path}/.kub-cli/host-bin:" in pathValues[0]
+    assert "SBATCH_EXPORT=ALL" in envValues
+    assert f"APPTAINER_CACHEDIR={tmp_path}/.kub-cli/apptainer/cache" in envValues
+    assert f"APPTAINER_TMPDIR={tmp_path}/.kub-cli/apptainer/tmp" in envValues
+    assert f"APPTAINER_CONFIGDIR={tmp_path}/.kub-cli/apptainer/config" in envValues
+    assert f"SINGULARITY_CACHEDIR={tmp_path}/.kub-cli/apptainer/cache" in envValues
+    assert f"SINGULARITY_TMPDIR={tmp_path}/.kub-cli/apptainer/tmp" in envValues
+    assert f"SINGULARITY_CONFIGDIR={tmp_path}/.kub-cli/apptainer/config" in envValues
 
     bridgeDir = tmp_path / ".kub-cli" / "host-bin"
     assert (bridgeDir / "sbatch").exists()
@@ -957,6 +1000,68 @@ def testHostSlurmBridgeSkipsSameFileCopy(
     )
 
     assert result.exit_code == 0
+
+
+def testSimulateHostSlurmBridgeAddsSrunFallbackWhenMissing(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    hostBin = tmp_path / "host-bin"
+    hostBin.mkdir()
+    hostSbatch = hostBin / "sbatch"
+    hostSbatch.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hostSbatch.chmod(0o755)
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "sbatch":
+            return str(hostSbatch)
+        if name == "srun":
+            return None
+        return None
+
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", fakeWhich)
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    envValues = extractFlagValues(command, "--env")
+    pathValues = [value for value in envValues if value.startswith("PATH=")]
+    assert len(pathValues) == 1
+    assert f"{tmp_path}/.kub-cli/host-bin:" in pathValues[0]
+
+    bridgeDir = tmp_path / ".kub-cli" / "host-bin"
+    srunShim = bridgeDir / "srun"
+    assert srunShim.exists()
+    shimText = srunShim.read_text(encoding="utf-8")
+    assert "mpirun" in shimText
+    assert "mpiexec" in shimText
+    assert "KUB_MPI_MODULES" in shimText
+    assert "KUB_MPI_EXEC_MODE" in shimText
 
 
 def testSimulatePreprocessInjectsSlurmShimsWhenHostSlurmMissing(
@@ -1179,3 +1284,471 @@ def testExposeHostSlurmSupportFilesIncludesIdentityFiles(
     assert f"{groupFile}:{groupFile}" in bindSpecs
     assert f"{nsswitchFile}:{nsswitchFile}" in bindSpecs
     assert f"{mungeDir}:{mungeDir}" in bindSpecs
+
+
+def testExposeHostSlurmSupportFilesDiscoversLinkedSlurmLibraries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    slurmBinDir = tmp_path / "slurm-bin"
+    slurmLibDir = tmp_path / "slurm-lib"
+    sbatchPath = slurmBinDir / "sbatch"
+    srunPath = slurmBinDir / "srun"
+    slurmLib = slurmLibDir / "libslurmfull.so"
+
+    slurmBinDir.mkdir()
+    slurmLibDir.mkdir()
+    sbatchPath.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    srunPath.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    slurmLib.write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setattr("kub_cli.wrapper_context.SLURM_LIBRARY_DIR_CANDIDATES", ())
+    monkeypatch.setattr("kub_cli.wrapper_context.SLURM_CONFIG_DIR_CANDIDATES", ())
+    monkeypatch.setattr("kub_cli.wrapper_context.SLURM_IDENTITY_FILE_CANDIDATES", ())
+    monkeypatch.setattr("kub_cli.wrapper_context.SLURM_MUNGE_PATH_CANDIDATES", ())
+
+    def fakeFindExecutable(commandName: str) -> str | None:
+        if commandName == "sbatch":
+            return str(sbatchPath)
+        if commandName == "srun":
+            return str(srunPath)
+        return None
+
+    class FakeProcess:
+        def __init__(self, output: str, returnCode: int = 0) -> None:
+            self._output = output
+            self.returncode = returnCode
+
+        def communicate(self):  # type: ignore[no-untyped-def]
+            return self._output, ""
+
+    def fakePopen(command, stdout=None, stderr=None, text=False):  # type: ignore[no-untyped-def]
+        executable = command[1]
+        if executable in {str(sbatchPath), str(srunPath)}:
+            return FakeProcess(f"libslurmfull.so => {slurmLib} (0x0000)\n")
+        raise AssertionError(f"Unexpected command: {command}")
+
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", fakeFindExecutable)
+    monkeypatch.setattr("kub_cli.wrapper_context.subprocess.Popen", fakePopen)
+
+    bindSpecs: list[str] = []
+    envAssignments: list[str] = []
+    exposeHostSlurmSupportFiles(
+        bindSpecs=bindSpecs,
+        envAssignments=envAssignments,
+    )
+
+    assert f"{slurmLibDir}:{slurmLibDir}" in bindSpecs
+    assert any(
+        assignment.startswith(f"LD_LIBRARY_PATH={slurmLibDir}")
+        for assignment in envAssignments
+    )
+
+
+def testExposeHostSlurmSupportFilesEnablesSssIdentityLookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    passwdFile = tmp_path / "passwd"
+    groupFile = tmp_path / "group"
+    nsswitchFile = tmp_path / "nsswitch.conf"
+    sssDir = tmp_path / "sss"
+    libDir = tmp_path / "lib64"
+
+    passwdFile.write_text("root:x:0:0:root:/root:/bin/sh\n", encoding="utf-8")
+    groupFile.write_text("root:x:0:\n", encoding="utf-8")
+    nsswitchFile.write_text(
+        "passwd: files sss\ngroup: files sss\n",
+        encoding="utf-8",
+    )
+    sssDir.mkdir()
+    libDir.mkdir()
+    for libraryName in (
+        "libnss_sss.so.2",
+        "libsss_nss_idmap.so.0",
+        "libsss_idmap.so.0",
+    ):
+        (libDir / libraryName).write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setattr("kub_cli.wrapper_context.SLURM_LIBRARY_DIR_CANDIDATES", ())
+    monkeypatch.setattr("kub_cli.wrapper_context.SLURM_CONFIG_DIR_CANDIDATES", ())
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.SLURM_IDENTITY_FILE_CANDIDATES",
+        (passwdFile, groupFile, nsswitchFile),
+    )
+    monkeypatch.setattr("kub_cli.wrapper_context.SLURM_MUNGE_PATH_CANDIDATES", ())
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.SSSD_RUNTIME_DIR_CANDIDATES",
+        (sssDir,),
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.NSS_LIBRARY_DIR_CANDIDATES",
+        (libDir,),
+    )
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", lambda _: None)
+
+    bindSpecs: list[str] = []
+    envAssignments: list[str] = []
+    exposeHostSlurmSupportFiles(
+        bindSpecs=bindSpecs,
+        envAssignments=envAssignments,
+    )
+
+    assert f"{sssDir}:{sssDir}" in bindSpecs
+    assert f"{libDir / 'libnss_sss.so.2'}:{libDir / 'libnss_sss.so.2'}" in bindSpecs
+    assert any(
+        assignment.startswith(f"LD_LIBRARY_PATH={libDir}")
+        for assignment in envAssignments
+    )
+
+
+def testResolveTargetSlurmPartitionFromProfileConfig(tmp_path: Path) -> None:
+    configPath = tmp_path / ".kub-simulate.toml"
+    configPath.write_text(
+        "[profiles.apptainer-slurm]\n"
+        'partition = "qcpu_long"\n',
+        encoding="utf-8",
+    )
+
+    partition = resolveTargetSlurmPartition(
+        forwardedArgs=("preprocess", "arz", "--profile", "apptainer-slurm"),
+        hostCemdbRoot=tmp_path,
+    )
+
+    assert partition == "qcpu_long"
+
+
+def testResolveTargetSlurmPartitionFallsBackToDefaults(tmp_path: Path) -> None:
+    configPath = tmp_path / ".kub-simulate.toml"
+    configPath.write_text(
+        "[defaults]\n"
+        'partition = "qcpu"\n',
+        encoding="utf-8",
+    )
+
+    partition = resolveTargetSlurmPartition(
+        forwardedArgs=("preprocess", "arz", "--profile", "missing-profile"),
+        hostCemdbRoot=tmp_path,
+    )
+
+    assert partition == "qcpu"
+
+
+def testSelectAssociationForPartitionParsesSacctmgrOutput() -> None:
+    output = (
+        "defac||normal\n"
+        "eu-25-66|qcpu|3162_5315\n"
+        "eu-25-66|qgpu|3162_5316\n"
+    )
+
+    association = selectAssociationForPartition(output=output, partition="qcpu")
+
+    assert association == ("eu-25-66", "3162_5315")
+
+
+def testEnsureSlurmAccountingEnvAddsDetectedAccountAndQos(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveTargetSlurmPartition",
+        lambda forwardedArgs, hostCemdbRoot: "qcpu",
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveSlurmAssociationForPartition",
+        lambda partition: ("eu-25-66", "3162_5315"),
+    )
+
+    assignments: list[str] = []
+    ensureSlurmAccountingEnv(
+        envAssignments=assignments,
+        forwardedArgs=("preprocess", "arz", "--profile", "apptainer-slurm"),
+        hostCemdbRoot=tmp_path,
+    )
+
+    assert "SBATCH_ACCOUNT=eu-25-66" in assignments
+    assert "SBATCH_QOS=3162_5315" in assignments
+
+
+def testEnsureSlurmAccountingEnvDoesNotOverrideExplicitValues(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveTargetSlurmPartition",
+        lambda forwardedArgs, hostCemdbRoot: "qcpu",
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveSlurmAssociationForPartition",
+        lambda partition: ("eu-25-66", "3162_5315"),
+    )
+
+    assignments = ["SBATCH_ACCOUNT=manual-account", "SBATCH_QOS=manual-qos"]
+    ensureSlurmAccountingEnv(
+        envAssignments=assignments,
+        forwardedArgs=("preprocess", "arz", "--profile", "apptainer-slurm"),
+        hostCemdbRoot=tmp_path,
+    )
+
+    assert "SBATCH_ACCOUNT=manual-account" in assignments
+    assert "SBATCH_QOS=manual-qos" in assignments
+
+
+def testEnsureSlurmAccountingEnvWithCustomConfigAndExplicitPartition(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveTargetSlurmPartition",
+        lambda forwardedArgs, hostCemdbRoot: "qcpu",
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveSlurmAssociationForPartition",
+        lambda partition: ("eu-25-66", "3162_5315"),
+    )
+
+    assignments: list[str] = []
+    ensureSlurmAccountingEnv(
+        envAssignments=assignments,
+        forwardedArgs=(
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+            "--config",
+            "/tmp/custom.toml",
+            "--partition",
+            "qcpu",
+        ),
+        hostCemdbRoot=tmp_path,
+    )
+
+    assert "SBATCH_ACCOUNT=eu-25-66" in assignments
+    assert "SBATCH_QOS=3162_5315" in assignments
+
+
+def testEnsureSlurmAccountingEnvSkipsCustomConfigWithoutExplicitPartition(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveTargetSlurmPartition",
+        lambda forwardedArgs, hostCemdbRoot: (_ for _ in ()).throw(
+            AssertionError("partition detection should be skipped")
+        ),
+    )
+
+    assignments: list[str] = []
+    ensureSlurmAccountingEnv(
+        envAssignments=assignments,
+        forwardedArgs=(
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+            "--config",
+            "/tmp/custom.toml",
+        ),
+        hostCemdbRoot=tmp_path,
+    )
+
+    assert assignments == []
+
+
+def testEnsureSlurmAccountingEnvSkipsNonSlurmInvocation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveTargetSlurmPartition",
+        lambda forwardedArgs, hostCemdbRoot: (_ for _ in ()).throw(
+            AssertionError("partition detection should be skipped")
+        ),
+    )
+
+    assignments: list[str] = []
+    ensureSlurmAccountingEnv(
+        envAssignments=assignments,
+        forwardedArgs=("run", "arz", "--launcher", "local"),
+        hostCemdbRoot=tmp_path,
+    )
+
+    assert assignments == []
+
+
+def testSelectClosestOpenMpiModulePrefersExactVersion() -> None:
+    selected = selectClosestOpenMpiModule(
+        moduleCandidates=(
+            "OpenMPI/4.1.5-GCC-12.3.0",
+            "OpenMPI/4.1.6-GCC-13.2.0",
+            "OpenMPI/4.1.8-GCC-13.2.0",
+        ),
+        targetVersion="4.1.6",
+    )
+
+    assert selected == "OpenMPI/4.1.6-GCC-13.2.0"
+
+
+def testSelectClosestOpenMpiModuleFallsBackToNearestPatch() -> None:
+    selected = selectClosestOpenMpiModule(
+        moduleCandidates=(
+            "OpenMPI/4.1.5-GCC-12.3.0",
+            "OpenMPI/4.1.8-GCC-13.2.0",
+        ),
+        targetVersion="4.1.6",
+    )
+
+    assert selected == "OpenMPI/4.1.5-GCC-12.3.0"
+
+
+def testEnsureAutoMpiExecutionEnvInjectsModeAndModule(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    imagePath = tmp_path / "kub-master.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.shouldAttemptAutoMpiDetection",
+        lambda forwardedArgs, hostCemdbRoot: True,
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveTargetApptainerImagePath",
+        lambda forwardedArgs, hostCemdbRoot, runtimeCwd: imagePath,
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveHostApptainerExecutablePath",
+        lambda configHint=None: Path("/usr/bin/apptainer"),
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.detectImageOpenMpiVersion",
+        lambda apptainerExecutable, imagePath: "4.1.6",
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.discoverAvailableOpenMpiModules",
+        lambda: (
+            "OpenMPI/4.1.5-GCC-12.3.0",
+            "OpenMPI/4.1.6-GCC-13.2.0",
+        ),
+    )
+
+    assignments: list[str] = []
+    ensureAutoMpiExecutionEnv(
+        envAssignments=assignments,
+        forwardedArgs=("preprocess", "arz", "--profile", "apptainer-slurm"),
+        hostCemdbRoot=tmp_path,
+        runtimeCwd=tmp_path,
+        configHint=None,
+    )
+
+    assert "KUB_MPI_MODULES=OpenMPI/4.1.6-GCC-13.2.0" in assignments
+    assert "KUB_MPI_EXEC_MODE=prefer-mpi" in assignments
+
+
+def testEnsureAutoMpiExecutionEnvDoesNotOverrideExplicitModeOrModules(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    imagePath = tmp_path / "kub-master.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.shouldAttemptAutoMpiDetection",
+        lambda forwardedArgs, hostCemdbRoot: True,
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveTargetApptainerImagePath",
+        lambda forwardedArgs, hostCemdbRoot, runtimeCwd: imagePath,
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.resolveHostApptainerExecutablePath",
+        lambda configHint=None: Path("/usr/bin/apptainer"),
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.detectImageOpenMpiVersion",
+        lambda apptainerExecutable, imagePath: "4.1.6",
+    )
+    monkeypatch.setattr(
+        "kub_cli.wrapper_context.discoverAvailableOpenMpiModules",
+        lambda: ("OpenMPI/4.1.6-GCC-13.2.0",),
+    )
+
+    assignments = [
+        "KUB_MPI_MODULES=manual-openmpi",
+        "KUB_MPI_EXEC_MODE=auto",
+    ]
+    ensureAutoMpiExecutionEnv(
+        envAssignments=assignments,
+        forwardedArgs=("preprocess", "arz", "--profile", "apptainer-slurm"),
+        hostCemdbRoot=tmp_path,
+        runtimeCwd=tmp_path,
+        configHint=None,
+    )
+
+    assert "KUB_MPI_MODULES=manual-openmpi" in assignments
+    assert "KUB_MPI_EXEC_MODE=auto" in assignments
+
+
+def testSimulateApptainerStorageEnvRespectsExplicitOverrides(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/docker")
+
+    hostBin = tmp_path / "host-bin"
+    hostBin.mkdir()
+    hostSbatch = hostBin / "sbatch"
+    hostSrun = hostBin / "srun"
+    hostSbatch.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hostSrun.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hostSbatch.chmod(0o755)
+    hostSrun.chmod(0o755)
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "sbatch":
+            return str(hostSbatch)
+        if name == "srun":
+            return str(hostSrun)
+        return None
+
+    monkeypatch.setattr("kub_cli.wrapper_context.findExecutable", fakeWhich)
+
+    captured: dict[str, object] = {}
+
+    def fakeRun(command, check, env):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr("kub_cli.runtime.subprocess.run", fakeRun)
+
+    result = cliRunner.invoke(
+        simulateApp,
+        [
+            "--runtime",
+            "docker",
+            "--image",
+            "ghcr.io/feelpp/ktirio-urban-building:master",
+            "--env",
+            "APPTAINER_CACHEDIR=/custom/cache",
+            "--env",
+            "APPTAINER_TMPDIR=/custom/tmp",
+            "--env",
+            "APPTAINER_CONFIGDIR=/custom/config",
+            "preprocess",
+            "arz",
+            "--profile",
+            "apptainer-slurm",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = captured["command"]  # type: ignore[assignment]
+    envValues = extractFlagValues(command, "--env")
+    assert "APPTAINER_CACHEDIR=/custom/cache" in envValues
+    assert "APPTAINER_TMPDIR=/custom/tmp" in envValues
+    assert "APPTAINER_CONFIGDIR=/custom/config" in envValues
+    assert "SINGULARITY_CACHEDIR=/custom/cache" in envValues
+    assert "SINGULARITY_TMPDIR=/custom/tmp" in envValues
+    assert "SINGULARITY_CONFIGDIR=/custom/config" in envValues
