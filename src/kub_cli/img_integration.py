@@ -24,8 +24,8 @@ from .image_resolution import (
 )
 from .logging_utils import LOGGER, formatCommand
 from .runtime import (
+    discoverRunnerExecutable,
     getRunnerValue,
-    tryResolveRunnerExecutable,
 )
 
 
@@ -167,13 +167,19 @@ def resolveImageRuntime(config: KubConfig) -> ImageRuntime:
         return configured
 
     apptainerRunnerValue = getRunnerValue(config, "apptainer")
-    apptainerRunner = tryResolveRunnerExecutable(apptainerRunnerValue)
-    if apptainerRunner is not None:
+    apptainerRunner = discoverRunnerExecutable(
+        apptainerRunnerValue,
+        runtimeName="apptainer",
+    )
+    if apptainerRunner.runnerPath is not None:
         return "apptainer"
 
     dockerRunnerValue = getRunnerValue(config, "docker")
-    dockerRunner = tryResolveRunnerExecutable(dockerRunnerValue)
-    if dockerRunner is not None:
+    dockerRunner = discoverRunnerExecutable(
+        dockerRunnerValue,
+        runtimeName="docker",
+    )
+    if dockerRunner.runnerPath is not None:
         return "docker"
 
     raise RuntimeSelectionError(
