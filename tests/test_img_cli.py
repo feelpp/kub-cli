@@ -235,6 +235,42 @@ def testPathAutoResolvesToDockerWhenApptainerUnavailable(
     assert result.output.strip() == "ghcr.io/feelpp/ktirio-urban-building:master"
 
 
+def testPathAutoFallsBackToDockerWhenApptainerProbeFails(
+    cliRunner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fakeWhich(name: str) -> str | None:
+        if name == "apptainer":
+            return "/usr/bin/apptainer"
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    def fakeProbe(runnerPath: str, *, runtimeName: str) -> str | None:
+        if runtimeName == "apptainer":
+            return (
+                "startup probe exited with code 255: "
+                "FATAL: While initializing: couldn't parse configuration file "
+                "/etc/apptainer/apptainer.conf"
+            )
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+    monkeypatch.setattr("kub_cli.runtime.probeRunnerExecutable", fakeProbe)
+
+    result = cliRunner.invoke(
+        imgApp,
+        [
+            "path",
+            "--runtime",
+            "auto",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.output.strip() == "ghcr.io/feelpp/ktirio-urban-building:master"
+
+
 def testAppsAutoRejectsWhenRuntimeResolvesToDocker(
     cliRunner: CliRunner,
     monkeypatch: pytest.MonkeyPatch,

@@ -304,6 +304,70 @@ def testAutoRuntimeFallsBackToDocker(
     assert resolution.imageReference == "ghcr.io/feelpp/ktirio-urban-building:master"
 
 
+def testSelectedRuntimeRejectsBrokenApptainerRunner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    imagePath = tmp_path / "kub.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    config = KubConfig(
+        runtime="apptainer",
+        imageApptainer=str(imagePath),
+    )
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", lambda _: "/usr/bin/apptainer")
+    monkeypatch.setattr(
+        "kub_cli.runtime.probeRunnerExecutable",
+        lambda runnerPath, *, runtimeName: (
+            "startup probe exited with code 255: "
+            "FATAL: While initializing: couldn't parse configuration file "
+            "/etc/apptainer/apptainer.conf"
+        ),
+    )
+
+    with pytest.raises(RunnerNotFoundError, match="not usable"):
+        resolveRuntimeForExecution(config)
+
+
+def testAutoRuntimeFallsBackToDockerWhenApptainerRunnerProbeFails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    imagePath = tmp_path / "kub.sif"
+    imagePath.write_text("dummy", encoding="utf-8")
+
+    config = KubConfig(
+        runtime="auto",
+        imageApptainer=str(imagePath),
+        imageDocker="ghcr.io/feelpp/ktirio-urban-building:master",
+    )
+
+    def fakeWhich(name: str) -> str | None:
+        if name == "apptainer":
+            return "/usr/bin/apptainer"
+        if name == "docker":
+            return "/usr/bin/docker"
+        return None
+
+    def fakeProbe(runnerPath: str, *, runtimeName: str) -> str | None:
+        if runtimeName == "apptainer":
+            return (
+                "startup probe exited with code 255: "
+                "FATAL: While initializing: couldn't parse configuration file "
+                "/etc/apptainer/apptainer.conf"
+            )
+        return None
+
+    monkeypatch.setattr("kub_cli.runtime.shutil.which", fakeWhich)
+    monkeypatch.setattr("kub_cli.runtime.probeRunnerExecutable", fakeProbe)
+
+    resolution = resolveRuntimeForExecution(config)
+
+    assert resolution.runtime == "docker"
+    assert resolution.runnerPath == "/usr/bin/docker"
+
+
 def testSelectedRuntimeRunnerNotFoundRaises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

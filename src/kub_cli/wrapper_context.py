@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Sequence
 from .app_policy import BaseAppPolicy
 from .config import KubConfig
 from .errors import ConfigError
+from .runtime import tryResolveRunnerExecutable
 
 
 if TYPE_CHECKING:
@@ -196,16 +197,44 @@ def resolveHostApptainerExecutablePath(*, configHint: KubConfig | None) -> Path 
         if configHint.apptainerRunner.strip():
             candidates.append(configHint.apptainerRunner.strip())
 
-    discovered = findExecutable("apptainer")
-    if discovered is not None:
-        candidates.append(discovered)
-
     for value in candidates:
         candidatePath = Path(value).expanduser()
-        if not candidatePath.is_absolute():
+        hasPathSeparator = candidatePath.parent != Path(".")
+
+        if candidatePath.is_absolute() or hasPathSeparator:
+            resolved = tryResolveRunnerExecutable(value, runtimeName="apptainer")
+        else:
+            discovered = findExecutable(value)
+            if discovered is None:
+                continue
+            resolved = tryResolveRunnerExecutable(
+                discovered,
+                runtimeName="apptainer",
+            )
+
+        if resolved is None:
             continue
-        if candidatePath.exists() and os.access(candidatePath, os.X_OK):
-            return candidatePath.resolve()
+
+        resolvedPath = Path(resolved).expanduser()
+        if not resolvedPath.is_absolute():
+            continue
+        if resolvedPath.exists() and os.access(resolvedPath, os.X_OK):
+            return resolvedPath.resolve()
+
+    discovered = findExecutable("apptainer")
+    if discovered is None:
+        return None
+
+    resolvedDiscovered = tryResolveRunnerExecutable(
+        discovered,
+        runtimeName="apptainer",
+    )
+    if resolvedDiscovered is None:
+        return None
+
+    discoveredPath = Path(resolvedDiscovered).expanduser()
+    if discoveredPath.is_absolute() and discoveredPath.exists() and os.access(discoveredPath, os.X_OK):
+        return discoveredPath.resolve()
 
     return None
 
