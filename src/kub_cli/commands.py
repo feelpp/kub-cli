@@ -21,6 +21,7 @@ from .img_integration import (
     buildKubImgPullRequest,
 )
 from .logging_utils import configureLogging
+from .preflight import runWrapperPreflight
 from .runtime import KubAppRunner
 from .wrapper_context import prepareCemdbContext, syncSimulateConfigProjection
 
@@ -65,6 +66,12 @@ def runWrapperCommand(
     if options.showConfig:
         print(json.dumps(initialConfig.toDict(), indent=2, sort_keys=True))
         return 0
+
+    runWrapperPreflight(
+        appName=appName,
+        forwardedArgs=forwardedArgs,
+        config=initialConfig,
+    )
 
     policy = getAppPolicy(appName)
     hasExplicitPolicyConfig = policy.hasExplicitWrapperConfig(forwardedArgs)

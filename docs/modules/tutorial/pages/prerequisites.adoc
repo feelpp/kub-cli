@@ -48,6 +48,29 @@ Choose one, install what matches your environment:
 - https://apptainer.org/docs/admin/main/installation.html[Install Apptainer]
 - https://docs.docker.com/engine/install/[Install Docker]
 
+== Container Registry Login (GHCR)
+
+Authenticate to `ghcr.io` before pulling images with `kub-img`.
+
+[source,bash]
+----
+kub-img login
+kub-img login --runtime apptainer
+kub-img login --runtime docker
+----
+
+`kub-img login` defaults to runtime auto-detection (Apptainer first, Docker fallback).
+If `--username` is omitted, `kub-img` prompts for it.
+Use `--password` or `--token` to pass a secret non-interactively:
+
+[source,bash]
+----
+kub-img login --username <your-github-user> --token "$GITHUB_TOKEN"
+----
+
+`kub-img` forwards the secret through stdin (`--password-stdin`) to the runtime.
+Use a GitHub personal access token with package read access.
+
 Optional Slurm support (for `kub-simulate --launcher slurm`):
 
 - `sbatch`
@@ -71,7 +94,7 @@ export CEMDB_ROOT={tutorial_cemdb_root}
 
 == Pull and Validate the Runtime Image
 
-Use `kub-img` before running simulation commands:
+Use `kub-img` after registry login and before running simulation commands:
 
 [source,bash,subs=attributes+]
 ----

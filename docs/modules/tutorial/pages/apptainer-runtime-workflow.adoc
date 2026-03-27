@@ -17,7 +17,14 @@ This page demonstrates wrapper-level runtime configuration for Apptainer and how
 
 include::partial$cemdb-root-defaults.adoc[]
 
-== 1. Pull or Refresh the Default Apptainer Image
+== 1. Login to GHCR
+
+[source,bash]
+----
+kub-img login --runtime apptainer
+----
+
+== 2. Pull or Refresh the Default Apptainer Image
 
 [source,bash,subs=attributes+]
 ----
@@ -25,7 +32,7 @@ kub-img pull --runtime apptainer --image ./kub-master.sif {tutorial_kub_apptaine
 kub-img path --runtime apptainer --image ./kub-master.sif
 ----
 
-== 2. Validate the Wrapper Runtime Selection
+== 3. Validate the Wrapper Runtime Selection
 
 [source,bash,subs=attributes+]
 ----
@@ -36,7 +43,7 @@ kub-simulate --runtime apptainer --help
 kub-img info --runtime apptainer --image ./kub-master.sif --json
 ----
 
-== 3. Configure Simulation Profiles
+== 4. Configure Simulation Profiles
 
 [source,bash,subs=attributes+]
 ----
@@ -58,7 +65,7 @@ kub-simulate --runtime apptainer config set runtime apptainer --profile-target a
 kub-simulate --runtime apptainer config show
 ----
 
-== 4. Run Preprocessing in Apptainer Wrapper Mode
+== 5. Run Preprocessing in Apptainer Wrapper Mode
 
 Slurm launcher (`apptainer-slurm` profile):
 
@@ -80,7 +87,7 @@ kub-simulate --runtime apptainer --image ./kub-master.sif preprocess {tutorial_l
   --partitions 32 64 {tutorial_np}
 ----
 
-== 5. Run the Simulation
+== 6. Run the Simulation
 
 Slurm launcher (`apptainer-slurm` profile):
 
@@ -102,7 +109,7 @@ kub-simulate --runtime apptainer --image ./kub-master.sif run {tutorial_location
   --np {tutorial_np}
 ----
 
-== 6. Optional Wrapper-level Runtime Flags
+== 7. Optional Wrapper-level Runtime Flags
 
 Use wrapper options for bind mounts and env forwarding:
 
@@ -119,7 +126,7 @@ kub-simulate --runtime apptainer --image ./kub-master.sif \
 
 Use `--apptainer-flag` if you need a lower-level runtime knob not exposed by kub-cli today.
 
-== 7. Inspect Status and Outputs
+== 8. Inspect Status and Outputs
 
 [source,bash,subs=attributes+]
 ----

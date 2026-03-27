@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 
@@ -188,6 +189,97 @@ def testMetaBumpCommandDryRun(cliRunner: CliRunner, tmp_path: Path) -> None:
 
     pyprojectContent = (projectRoot / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = "4.4.4"' in pyprojectContent
+
+
+def testMetaGenerateShellCompletionBashIncludesAllTools(
+    cliRunner: CliRunner,
+) -> None:
+    result = cliRunner.invoke(
+        metaApp,
+        ["generate-shell-completion", "bash"],
+    )
+
+    assert result.exit_code == 0
+    assert "_kub_cli_completion()" in result.stdout
+    assert "_kub_dataset_completion()" in result.stdout
+    assert "_kub_simulate_completion()" in result.stdout
+    assert "_kub_dashboard_completion()" in result.stdout
+    assert "_kub_img_completion()" in result.stdout
+    assert "-F _kub_cli_completion kub-cli" in result.stdout
+    assert "-F _kub_dataset_completion kub-dataset" in result.stdout
+    assert "-F _kub_simulate_completion kub-simulate" in result.stdout
+    assert "-F _kub_dashboard_completion kub-dashboard" in result.stdout
+    assert "-F _kub_img_completion kub-img" in result.stdout
+    assert "_KUB_CLI_COMPLETE=complete_bash" in result.stdout
+    assert "_KUB_IMG_COMPLETE=complete_bash" in result.stdout
+    assert "IFS=',' read type value" in result.stdout
+
+
+def testMetaGenerateShellCompletionRejectsUnsupportedShell(
+    cliRunner: CliRunner,
+) -> None:
+    result = cliRunner.invoke(
+        metaApp,
+        ["generate-shell-completion", "tcsh"],
+    )
+
+    assert result.exit_code == 2
+    assert "Unsupported shell 'tcsh'" in result.output
+
+
+def testMetaDoctorJsonReportsCapabilities(
+    cliRunner: CliRunner,
+) -> None:
+    result = cliRunner.invoke(
+        metaApp,
+        [
+            "doctor",
+            "--runtime",
+            "docker",
+            "--runner",
+            "/bin/echo",
+            "--json",
+            "--no-cache",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["cacheHit"] is False
+    assert payload["requiredFailureCount"] == 0
+    checks = payload["checks"]
+    assert any(
+        check["name"] == "runtime-resolution" and check["status"] == "ok"
+        for check in checks
+    )
+
+
+def testMetaDoctorFailsWhenRuntimeCannotResolve(
+    cliRunner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    missingRunner = tmp_path / "missing-docker"
+    result = cliRunner.invoke(
+        metaApp,
+        [
+            "doctor",
+            "--runtime",
+            "docker",
+            "--runner",
+            str(missingRunner),
+            "--json",
+            "--no-cache",
+        ],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.output)
+    assert payload["requiredFailureCount"] == 1
+    checks = payload["checks"]
+    assert any(
+        check["name"] == "runtime-resolution" and check["status"] == "fail"
+        for check in checks
+    )
 
 
 def testBumpWithoutUnreleasedSectionRaises(tmp_path: Path) -> None:

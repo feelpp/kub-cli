@@ -7,14 +7,24 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Sequence
 
+from click.shell_completion import BashComplete, FishComplete, ShellComplete, ZshComplete
 import typer
+from typer.main import get_command
 
 from . import __version__
 from .commands import WrapperOptions, runWrapperCommand
+from .config import KubConfigOverrides, loadKubConfig
 from .errors import KubCliError
+from .preflight import (
+    DEFAULT_DOCTOR_CACHE_TTL_SECONDS,
+    formatDoctorReport,
+    reportHasRequiredFailures,
+    runSystemDoctor,
+)
 from .versioning import bumpProjectVersion
 
 
@@ -278,6 +288,98 @@ def createMetaApp() -> typer.Typer:
                 f'gh release create {releaseTag} --generate-notes --title "{releaseTag}"'
             )
 
+    @app.command("generate-shell-completion")
+    def generateShellCompletionCommand(
+        shell: str = typer.Argument(
+            ...,
+            metavar="{bash,zsh,fish}",
+            help="Target shell for completion script generation.",
+        ),
+    ) -> None:
+        try:
+            script = buildShellCompletionScript(shell)
+        except KubCliError as error:
+            typer.secho(str(error), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=error.exit_code) from error
+
+        typer.echo(script, nl=False)
+
+    @app.command("doctor")
+    def doctorCommand(
+        runtime: str | None = typer.Option(
+            None,
+            "--runtime",
+            metavar="{auto,apptainer,docker}",
+            help="Runtime override for capability diagnostics.",
+        ),
+        image: str | None = typer.Option(
+            None,
+            "--image",
+            metavar="IMAGE",
+            help="Image override for capability diagnostics.",
+        ),
+        runner: str | None = typer.Option(
+            None,
+            "--runner",
+            metavar="PATH",
+            help="Runner override for capability diagnostics.",
+        ),
+        verbose: bool | None = typer.Option(
+            None,
+            "--verbose/--no-verbose",
+            help="Enable or disable verbose logging.",
+        ),
+        jsonOutput: bool = typer.Option(
+            False,
+            "--json",
+            help="Emit doctor report as JSON.",
+        ),
+        refresh: bool = typer.Option(
+            False,
+            "--refresh",
+            help="Ignore cached diagnostics and probe the system again.",
+        ),
+        noCache: bool = typer.Option(
+            False,
+            "--no-cache",
+            help="Do not read/write the doctor cache.",
+        ),
+        cacheTtlSeconds: int = typer.Option(
+            DEFAULT_DOCTOR_CACHE_TTL_SECONDS,
+            "--cache-ttl",
+            min=0,
+            help="Doctor cache TTL in seconds (default: 300).",
+        ),
+    ) -> None:
+        try:
+            config = loadKubConfig(
+                overrides=KubConfigOverrides(
+                    runtime=runtime,
+                    image=image,
+                    runner=runner,
+                    verbose=verbose,
+                )
+            )
+            report = runSystemDoctor(
+                config=config,
+                refresh=refresh,
+                useCache=not noCache,
+                cacheTtlSeconds=cacheTtlSeconds,
+            )
+        except KubCliError as error:
+            typer.secho(str(error), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=error.exit_code) from error
+
+        if jsonOutput:
+            typer.echo(json.dumps(report.toDict(), indent=2, sort_keys=True))
+        else:
+            typer.echo(formatDoctorReport(report))
+
+        if reportHasRequiredFailures(report):
+            raise typer.Exit(code=2)
+
+        raise typer.Exit(code=0)
+
     return app
 
 
@@ -303,6 +405,60 @@ dashboardApp = createWrapperApp(
     ),
 )
 metaApp = createMetaApp()
+
+
+SHELL_COMPLETION_SHELLS: tuple[str, ...] = ("bash", "fish", "zsh")
+SHELL_COMPLETION_CLASSES: dict[str, type[ShellComplete]] = {
+    "bash": BashComplete,
+    "fish": FishComplete,
+    "zsh": ZshComplete,
+}
+
+
+def resolveShellCompletionShell(shell: str) -> str:
+    normalized = shell.strip().lower()
+    if normalized not in SHELL_COMPLETION_SHELLS:
+        supported = ", ".join(sorted(SHELL_COMPLETION_SHELLS))
+        raise KubCliError(
+            f"Unsupported shell '{shell}'. Use one of: {supported}."
+        )
+    return normalized
+
+
+def getCompletionApps() -> tuple[tuple[str, typer.Typer], ...]:
+    from .img_cli import imgApp
+
+    return (
+        ("kub-cli", metaApp),
+        ("kub-dataset", datasetApp),
+        ("kub-simulate", simulateApp),
+        ("kub-dashboard", dashboardApp),
+        ("kub-img", imgApp),
+    )
+
+
+def buildShellCompletionScript(shell: str) -> str:
+    normalizedShell = resolveShellCompletionShell(shell)
+    completionClass = SHELL_COMPLETION_CLASSES[normalizedShell]
+    scripts: list[str] = []
+    for progName, app in getCompletionApps():
+        clickCommand = get_command(app)
+        completeVar = f"_{progName.replace('-', '_').upper()}_COMPLETE"
+        completion = completionClass(
+            cli=clickCommand,
+            ctx_args={},
+            prog_name=progName,
+            complete_var=completeVar,
+        ).source()
+        completion = (
+            completion
+            .replace("=bash_complete", "=complete_bash")
+            .replace("=zsh_complete", "=complete_zsh")
+            .replace("=fish_complete", "=complete_fish")
+        )
+        scripts.append(completion.rstrip())
+
+    return "\n\n".join(part for part in scripts if part) + "\n"
 
 
 def datasetMain() -> None:
